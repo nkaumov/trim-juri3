@@ -1,0 +1,11 @@
+{
+  "title": "Connections",
+  "google.oauth": "Google API OAuth",
+  "google.oauth.desc": "Recommended production flow for team access and secure scopes.",
+  "google.password": "App password",
+  "google.password.desc": "Simplified fallback for accounts without OAuth setup.",
+  "platform.title": "Platform readiness",
+  "platform.item.1": "Single API adapter for integration",
+  "platform.item.2": "Agent mode based on workflow events",
+  "platform.item.3": "Environment config via Docker"
+}

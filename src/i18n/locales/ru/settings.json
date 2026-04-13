@@ -1,0 +1,11 @@
+{
+  "title": "Подключения",
+  "google.oauth": "Google API OAuth",
+  "google.oauth.desc": "Рекомендуемый продовый сценарий для командной работы и безопасного доступа.",
+  "google.password": "Пароль приложений",
+  "google.password.desc": "Упрощенный fallback для аккаунтов без OAuth-контура.",
+  "platform.title": "Готовность к платформе",
+  "platform.item.1": "Единый API-адаптер для интеграции",
+  "platform.item.2": "Агентный режим на базе workflow-событий",
+  "platform.item.3": "Конфиг окружения через Docker"
+}

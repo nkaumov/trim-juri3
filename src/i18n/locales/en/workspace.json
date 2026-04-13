@@ -1,0 +1,18 @@
+{
+  "hero.title": "AI mediator for contract negotiation",
+  "hero.text": "New interface version: left sidebar for navigation and connections, unified workspace on the right.",
+  "contracts.title": "Contracts in progress",
+  "flow.title": "Disagreement ping-pong",
+  "ai.title": "AI assistant",
+  "flow.1": "Counterparty draft uploaded",
+  "flow.2": "Comparison against baseline completed",
+  "flow.3": "Disagreement protocol sent",
+  "flow.4": "Waiting for response / next round",
+  "ai.placeholder": "Soon: agent chat and commands to compare, prepare response, and generate final document.",
+  "actions.start": "Start review",
+  "actions.google": "Connect Google Docs",
+  "actions.protocol": "Generate protocol",
+  "status.in_review": "In review",
+  "status.waiting": "Waiting counterparty",
+  "status.ready": "Ready to sign"
+}
