@@ -54,10 +54,10 @@
   "contract.protocol.cell.save": "Сохранить",
   "contract.protocol.cell.cancel": "Отмена",
   "contract.protocol.edit.error": "Не удалось обновить протокол.",
-  "contract.ai.title": "Чат с ИИ",
+
   "contract.ai.status.view": "только просмотр",
   "contract.ai.status.active": "активно",
-  "contract.ai.helper": "Пишите свободно или прикрепляйте файл. Агент сам определит тип входа и обновит протокол.",
+  
   "contract.ai.processing": "ИИ обрабатывает запрос...",
   "contract.ai.error": "Не удалось обработать запрос.",
   "contract.ai.notice.protocol": "Обработка завершена. Результат доступен во вкладке «Протокол».",
@@ -86,5 +86,18 @@
   "contract.finalize.text": "После завершения будет доступна только вкладка «Финальный документ». Редактирование станет недоступно.",
   "contract.finalize.cancel": "Отмена",
   "contract.finalize.confirm": "Завершить",
-  "contract.error.load": "Не удалось загрузить данные договора."
+  "contract.error.load": "Не удалось загрузить данные договора.",
+  "contract.ai.title": "Разбор позиции клиента",
+  "contract.ai.helper": "ИИ работает только с позицией клиента, аккуратно обновляет текущий протокол и старается не допускать дублей.",
+
+  "contract.ai.request.title": "Добавить запрос клиента",
+  "contract.ai.request.subtitle": "Выберите сценарий. ИИ будет обновлять уже существующий протокол, а не начинать работу заново.",
+  "contract.ai.mode.title": "Сценарий обработки",
+
+  "contract.ai.fileLabel": "Документ клиента",
+  "contract.ai.log.title": "Контекст переписки",
+  "contract.ai.log.empty": "Пока нет ни одного обработанного запроса клиента.",
+
+  "contract.branch.protocolSync.title": "Обновить по текущему протоколу",
+  "contract.branch.protocolSync.desc": "Загрузите актуальный файл протокола, если в нем уже есть клиентские, наши и согласованные редакции."
 }

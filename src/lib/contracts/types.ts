@@ -39,6 +39,13 @@ export type ContractIteration = {
   responseDraft?: Record<string, string>;
 };
 
+export type ProtocolInputMode =
+  | "client-freeform"
+  | "client-points"
+  | "client-protocol"
+  | "edited-template"
+  | "protocol-sync";
+
 export type ProtocolRow = {
   clause: string;
   clientText: string;
@@ -56,6 +63,16 @@ export type ProtocolComment = {
   guidance?: string;
 };
 
+export type ProtocolRequestLog = {
+  id: string;
+  mode: ProtocolInputMode;
+  text: string;
+  fileName?: string;
+  fileType?: string;
+  createdAt: string;
+  summary?: string;
+};
+
 export type ContractDraft = {
   id: string;
   clientId: string;
@@ -69,6 +86,7 @@ export type ContractDraft = {
   protocolComments?: ProtocolComment[];
   protocolSummary?: string;
   protocolRecommendation?: string;
+  protocolRequests?: ProtocolRequestLog[];
   createdAt: string;
   status: "draft" | "archived";
   iterations: ContractIteration[];
