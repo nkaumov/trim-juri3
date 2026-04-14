@@ -1,266 +1,239 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
-declare global {
-  interface Window {
-    DocsAPI?: {
-      DocEditor: new (placeholderId: string, config: object) => {
-        destroyEditor?: () => void;
-      };
-    };
-  }
-}
+type OnlyOfficeMode = "view" | "edit";
 
 type Props = {
-  fileUrl?: string | null;
-  fileName?: string | null;
-  isVisible?: boolean;
+  fileUrl: string;
+  fileName?: string;
+  mode?: OnlyOfficeMode;
 };
 
-let docsApiScriptPromise: Promise<void> | null = null;
+type SignedPayload = {
+  url: string;
+  docId: string;
+  exp: number;
+  token: string;
+  kind: "contracts" | "knowledge";
+};
 
-function buildDocumentKey(fileName: string, fileUrl: string): string {
-  const raw = `${fileName}-${fileUrl}`;
-  const safe = raw.replace(/[^0-9A-Za-z._-]/g, "_");
-  return safe.slice(0, 120) || "contract_document";
-}
-
-function fileTypeByName(fileName: string): string {
-  const ext = fileName.split(".").pop()?.toLowerCase() ?? "";
-  return ext || "docx";
-}
-
-function documentTypeByName(fileName: string): "word" | "cell" | "slide" {
-  const ext = fileName.split(".").pop()?.toLowerCase() ?? "";
-  if (["xlsx", "xls", "csv"].includes(ext)) {
-    return "cell";
+function getDocId(fileUrl: string): { docId: string; kind: SignedPayload["kind"] } | null {
+  if (fileUrl.startsWith("/api/contracts/files/")) {
+    return { docId: fileUrl.replace("/api/contracts/files/", ""), kind: "contracts" };
   }
-  if (["pptx", "ppt"].includes(ext)) {
-    return "slide";
-  }
-  return "word";
-}
-
-function getApiPath(fileUrl?: string | null): string | null {
-  if (!fileUrl) {
-    return null;
-  }
-  if (fileUrl.startsWith("/api/")) {
-    return fileUrl;
-  }
-  try {
-    const parsed = new URL(fileUrl);
-    if (parsed.pathname.startsWith("/api/")) {
-      return `${parsed.pathname}${parsed.search}`;
-    }
-  } catch {
-    return null;
+  if (fileUrl.startsWith("/api/knowledge/files/")) {
+    return { docId: fileUrl.replace("/api/knowledge/files/", ""), kind: "knowledge" };
   }
   return null;
 }
 
-export function OnlyOfficeViewer({ fileUrl, fileName, isVisible = true }: Props) {
-  const containerId = useMemo(() => `oo-${crypto.randomUUID()}`, []);
+function withBaseUrl(path: string): string {
+  const base = process.env.NEXT_PUBLIC_ONLYOFFICE_FILE_BASE_URL || "";
+  if (!base) return path;
+  return `${base.replace(/\/$/, "")}${path}`;
+}
+
+function getFileType(fileName?: string): { fileType: string; documentType: "word" | "cell" | "slide" } {
+  const fallback = { fileType: "docx", documentType: "word" as const };
+  if (!fileName) return fallback;
+  const ext = fileName.split(".").pop()?.toLowerCase() ?? "";
+  if (!ext) return fallback;
+  if (["xlsx", "xls", "csv"].includes(ext)) {
+    return { fileType: ext, documentType: "cell" };
+  }
+  if (["pptx", "ppt"].includes(ext)) {
+    return { fileType: ext, documentType: "slide" };
+  }
+  return { fileType: ext, documentType: "word" };
+}
+
+export function OnlyOfficeViewer({ fileUrl, fileName, mode = "view" }: Props) {
+  const tenantId = process.env.NEXT_PUBLIC_PLATFORM_TENANT_ID ?? "local-tenant";
+  const agentId = process.env.NEXT_PUBLIC_PLATFORM_AGENT_ID ?? "jurist3-agent";
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const editorRef = useRef<{ destroyEditor?: () => void } | null>(null);
+  const editorRef = useRef<any>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [signError, setSignError] = useState<string | null>(null);
-  const [editorHeight, setEditorHeight] = useState(720);
-  const [signedUrl, setSignedUrl] = useState<string>("");
-  const apiPath = useMemo(() => getApiPath(fileUrl), [fileUrl]);
-  const readyDocumentUrl = useMemo(() => {
-    if (apiPath && !signedUrl) {
-      return "";
-    }
-    if (signedUrl) {
-      return signedUrl;
-    }
-    if (!fileUrl || !fileName) {
-      return "";
-    }
-    const fileBaseUrl = (process.env.NEXT_PUBLIC_ONLYOFFICE_FILE_BASE_URL ?? window.location.origin).replace(
-      /\/$/,
-      "",
-    );
-    return fileUrl.startsWith("http") ? fileUrl : `${fileBaseUrl}${fileUrl}`;
-  }, [apiPath, fileUrl, fileName, signedUrl]);
+  const [loading, setLoading] = useState(true);
+  const [signed, setSigned] = useState<SignedPayload | null>(null);
+  const { fileType, documentType } = useMemo(() => getFileType(fileName), [fileName]);
+  const onlyOfficeUrl = process.env.NEXT_PUBLIC_ONLYOFFICE_URL || "";
+  const scriptSrc = onlyOfficeUrl
+    ? `${onlyOfficeUrl.replace(/\/$/, "")}/web-apps/apps/api/documents/api.js`
+    : "";
+  const docUrl = signed ? withBaseUrl(signed.url) : "";
+
+  const docMeta = useMemo(() => getDocId(fileUrl), [fileUrl]);
 
   useEffect(() => {
-    function syncHeight() {
-      const next = Math.max(window.innerHeight - 250, 460);
-      setEditorHeight(next);
-    }
-
-    syncHeight();
-    window.addEventListener("resize", syncHeight);
-    return () => window.removeEventListener("resize", syncHeight);
-  }, []);
-
-  useEffect(() => {
-    if (!readyDocumentUrl || !fileName) {
-      if (containerRef.current) {
-        containerRef.current.innerHTML = "";
+    let active = true;
+    async function sign() {
+      if (!docMeta) return;
+      setLoadError(null);
+      try {
+        const response = await fetch(
+          `/api/files/sign?docId=${encodeURIComponent(docMeta.docId)}&kind=${docMeta.kind}`,
+        );
+        if (!response.ok) {
+          throw new Error("sign failed");
+        }
+        const payload = (await response.json()) as SignedPayload;
+        if (active) {
+          setSigned(payload);
+        }
+      } catch {
+        if (active) {
+          setLoadError("Unable to sign document URL.");
+        }
       }
+    }
+
+    void sign();
+    return () => {
+      active = false;
+    };
+  }, [docMeta]);
+
+
+  useEffect(() => {
+    if (!signed || !containerRef.current) return;
+
+    const onlyOfficeUrl = process.env.NEXT_PUBLIC_ONLYOFFICE_URL || "";
+    if (!onlyOfficeUrl) {
+      setLoadError("ONLYOFFICE url not configured.");
+      setLoading(false);
       return;
     }
 
-    const onlyOfficeUrl = (process.env.NEXT_PUBLIC_ONLYOFFICE_URL ?? "http://localhost:8080").replace(
-      /\/$/,
-      "",
-    );
-    const scriptUrl = `${onlyOfficeUrl}/web-apps/apps/api/documents/api.js`;
-    let cancelled = false;
+    const scriptId = "onlyoffice-api";
+    const existing = document.getElementById(scriptId) as HTMLScriptElement | null;
+    const scriptSrc = `${onlyOfficeUrl.replace(/\/$/, "")}/web-apps/apps/api/documents/api.js`;
+    const timeoutId = window.setTimeout(() => {
+      setLoadError(`OnlyOffice not reachable: ${scriptSrc}`);
+      setLoading(false);
+    }, 8000);
 
-    function renderEditor() {
-      if (cancelled || !window.DocsAPI?.DocEditor) {
+    function initEditor() {
+      if (!containerRef.current) return;
+      if (!window || !(window as any).DocsAPI) {
+        setLoadError("OnlyOffice API unavailable.");
+        setLoading(false);
         return;
       }
 
-      const container = containerRef.current;
-      if (container) {
-        container.innerHTML = "";
+      if (editorRef.current) {
+        editorRef.current.destroyEditor?.();
+        editorRef.current = null;
       }
+      containerRef.current.innerHTML = "";
 
-      editorRef.current?.destroyEditor?.();
-      const instance = new window.DocsAPI.DocEditor(containerId, {
+      const callbackUrl =
+        mode === "edit"
+          ? withBaseUrl(
+              `/api/contracts/onlyoffice-callback?docId=${encodeURIComponent(signed.docId)}` +
+                `&token=${encodeURIComponent(signed.token)}&exp=${signed.exp}` +
+                `&tenantId=${encodeURIComponent(tenantId)}&agentId=${encodeURIComponent(agentId)}`,
+            )
+          : undefined;
+
+      const config = {
         document: {
-          fileType: fileTypeByName(fileName),
-          key: buildDocumentKey(fileName, fileUrl ?? ""),
-          title: fileName,
-          url: readyDocumentUrl,
+          fileType,
+          key: `${signed.docId}-${signed.exp}`,
+          title: fileName ?? signed.docId,
+          url: withBaseUrl(signed.url),
           permissions: {
-            edit: false,
+            edit: mode === "edit",
+            download: true,
+            print: false,
             comment: false,
             review: false,
-            fillForms: false,
           },
         },
-        documentType: documentTypeByName(fileName),
+        documentType,
         editorConfig: {
-          mode: "view",
-          lang: "ru",
+          mode,
+          callbackUrl,
+          user: {
+            id: "user",
+            name: "User",
+          },
           customization: {
-            compactHeader: true,
             compactToolbar: true,
-            zoom: 85,
-            toolbarHideFileName: false,
+            toolbarNoTabs: true,
+            hideRightMenu: true,
+            hideRulers: true,
+            forcesave: false,
           },
         },
         events: {
-          onError: () => {
-            if (!cancelled) {
-              setLoadError("OnlyOffice не смог открыть документ. Проверьте доступность файла и контейнера.");
-            }
+          onAppReady: () => {
+            setLoading(false);
+          },
+          onDocumentReady: () => {
+            setLoading(false);
+          },
+          onError: (event: any) => {
+            const message = event ? JSON.stringify(event) : "unknown";
+            setLoadError(`OnlyOffice error: ${message}`);
+            setLoading(false);
           },
         },
-        type: "desktop",
         width: "100%",
-        height: `${editorHeight}px`,
-      });
-      editorRef.current = instance;
-    }
+        height: "100%",
+      };
 
-    async function ensureScript() {
-      if (window.DocsAPI?.DocEditor) {
+      const containerId = containerRef.current.id || `onlyoffice-${signed.docId}`;
+      containerRef.current.id = containerId;
+      try {
+        editorRef.current = new (window as any).DocsAPI.DocEditor(
+          containerId,
+          config,
+        );
+        setLoading(false);
+        window.clearTimeout(timeoutId);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setLoadError(`OnlyOffice init error: ${message}`);
+        setLoading(false);
+        window.clearTimeout(timeoutId);
         return;
       }
 
-      if (!docsApiScriptPromise) {
-        docsApiScriptPromise = new Promise<void>((resolve, reject) => {
-          const existing = document.querySelector<HTMLScriptElement>(`script[src="${scriptUrl}"]`);
-          if (existing) {
-            existing.addEventListener("load", () => resolve(), { once: true });
-            existing.addEventListener("error", () => reject(new Error("Script load failed")), { once: true });
-            return;
-          }
-
-          const script = document.createElement("script");
-          script.src = scriptUrl;
-          script.async = true;
-          script.onload = () => resolve();
-          script.onerror = () => reject(new Error("Script load failed"));
-          document.body.appendChild(script);
-        });
-      }
-
-      await docsApiScriptPromise;
     }
 
-    void ensureScript()
-      .then(() => {
-        renderEditor();
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setLoadError("OnlyOffice API недоступен. Проверьте контейнер и URL в .env.");
-        }
-      });
+    if (existing) {
+      initEditor();
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.id = scriptId;
+    script.src = scriptSrc;
+    script.onload = initEditor;
+    script.onerror = () => {
+      setLoadError(`Failed to load OnlyOffice API: ${scriptSrc}`);
+      setLoading(false);
+      window.clearTimeout(timeoutId);
+    };
+    document.body.appendChild(script);
 
     return () => {
-      cancelled = true;
-      editorRef.current?.destroyEditor?.();
-      editorRef.current = null;
-      if (containerRef.current) {
-        containerRef.current.innerHTML = "";
+      window.clearTimeout(timeoutId);
+      if (editorRef.current) {
+        editorRef.current.destroyEditor?.();
+        editorRef.current = null;
       }
     };
-  }, [containerId, editorHeight, fileName, fileUrl, readyDocumentUrl]);
-
-  useEffect(() => {
-    if (!fileUrl) {
-      setSignedUrl("");
-      setSignError(null);
-      return;
-    }
-    if (!apiPath) {
-      setSignedUrl("");
-      setSignError(null);
-      return;
-    }
-    const kind = apiPath.startsWith("/api/knowledge/") ? "knowledge" : "contracts";
-    const docId = apiPath.split("/").pop() || "";
-    void (async () => {
-      try {
-        const response = await fetch(`/api/files/sign?docId=${encodeURIComponent(docId)}&kind=${kind}`);
-        if (!response.ok) {
-          setSignError("Не удалось получить подписанную ссылку для OnlyOffice. Проверьте DOCUMENTS_SIGNING_KEY и перезапустите сервер.");
-          return;
-        }
-        const payload = (await response.json()) as { url?: string };
-        if (payload.url) {
-          const fileBaseUrl = (process.env.NEXT_PUBLIC_ONLYOFFICE_FILE_BASE_URL ?? window.location.origin).replace(
-            /\/$/,
-            "",
-          );
-          setSignedUrl(payload.url.startsWith("http") ? payload.url : `${fileBaseUrl}${payload.url}`);
-          setSignError(null);
-        }
-      } catch {
-        setSignError("Не удалось получить подписанную ссылку для OnlyOffice. Проверьте DOCUMENTS_SIGNING_KEY и перезапустите сервер.");
-      }
-    })();
-  }, [apiPath, fileUrl]);
-
-  const statusText = signError
-    ? signError
-    : !readyDocumentUrl
-    ? "Подготавливаем документ..."
-    : loadError
-      ? loadError
-      : "";
+  }, [signed, mode]);
 
   return (
-    <div className={`onlyoffice-shell ${isVisible ? "" : "empty"}`}>
-      <div className={`onlyoffice-status ${statusText ? "visible" : ""}`} aria-live="polite">
-        {statusText}
+    <div className="onlyoffice-frame">
+      <div className="onlyoffice-status">
+        {loadError ? <p className="form-error">{loadError}</p> : null}
+        {loading && !loadError ? <p className="muted-text">Loading editor...</p> : null}
       </div>
-      <div
-        className="onlyoffice-viewer"
-        id={containerId}
-        ref={containerRef}
-        style={{ height: `${editorHeight}px` }}
-      />
+      <div className="onlyoffice-container" ref={containerRef} />
     </div>
   );
 }

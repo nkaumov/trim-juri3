@@ -1,7 +1,7 @@
 "use client";
 
-import { ContractPageClient } from "@/components/contracts/ContractPageClient";
+import { ContractWorkspace } from "@/components/contracts/ContractWorkspace";
 
 export default function ContractPage() {
-  return <ContractPageClient />;
+  return <ContractWorkspace />;
 }

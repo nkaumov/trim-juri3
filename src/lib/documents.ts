@@ -118,3 +118,34 @@ export async function getDocument(
     buffer,
   };
 }
+
+export async function updateDocument(input: {
+  id: string;
+  tenantId: string;
+  agentId: string;
+  fileName?: string;
+  mimeType?: string;
+  buffer: Buffer;
+}): Promise<void> {
+  const db = await ensureDb();
+  const encrypted = encryptBuffer(input.buffer);
+  await db.query(
+    `UPDATE documents
+     SET file_name = COALESCE($4, file_name),
+         mime_type = COALESCE($5, mime_type),
+         data = $6,
+         iv = $7,
+         tag = $8
+     WHERE id = $1 AND tenant_id = $2 AND agent_id = $3`,
+    [
+      input.id,
+      input.tenantId,
+      input.agentId,
+      input.fileName ?? null,
+      input.mimeType ?? null,
+      encrypted.data,
+      encrypted.iv,
+      encrypted.tag,
+    ],
+  );
+}

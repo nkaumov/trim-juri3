@@ -9,7 +9,12 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  if (pathname.startsWith("/api/knowledge/files/") || pathname.startsWith("/api/contracts/files/")) {
+  if (
+    pathname.startsWith("/api/knowledge/files/") ||
+    pathname.startsWith("/api/contracts/files/") ||
+    pathname.startsWith("/api/files/sign") ||
+    pathname.startsWith("/api/contracts/onlyoffice-callback")
+  ) {
     return NextResponse.next();
   }
 

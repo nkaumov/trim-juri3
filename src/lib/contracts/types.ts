@@ -39,12 +39,36 @@ export type ContractIteration = {
   responseDraft?: Record<string, string>;
 };
 
+export type ProtocolRow = {
+  clause: string;
+  clientText: string;
+  ourText?: string;
+  agreedText?: string;
+};
+
+export type ProtocolComment = {
+  id: string;
+  clause: string;
+  was: string;
+  now: string;
+  severity: "critical" | "moderate" | "minor";
+  comment: string;
+  guidance?: string;
+};
+
 export type ContractDraft = {
   id: string;
   clientId: string;
   templateDocId: string;
   templateName: string;
   templateFileUrl?: string;
+  protocolFileUrl?: string;
+  protocolFileName?: string;
+  protocolUpdatedAt?: string;
+  protocolRows?: ProtocolRow[];
+  protocolComments?: ProtocolComment[];
+  protocolSummary?: string;
+  protocolRecommendation?: string;
   createdAt: string;
   status: "draft" | "archived";
   iterations: ContractIteration[];

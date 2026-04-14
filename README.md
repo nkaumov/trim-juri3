@@ -38,3 +38,5 @@ docker compose up --build
 ## Следующий шаг
 
 Подключить реальные API из `JURI2` и заменить mock-данные в `src/lib/contracts/mock.ts`.
+# Use UTF-8 encoding in PowerShell profile for this repository.
+# Run: .\scripts\psprofile-utf8.ps1
