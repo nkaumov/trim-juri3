@@ -1,0 +1,15 @@
+﻿{
+  "type": "edited-template",
+  "title": "Edited template with updated penalty",
+  "extractedText": "1.2 Penalty 0.2% per day.",
+  "expectations": {
+    "expectedClausesPresent": ["1.1", "1.2"],
+    "manualFields": [
+      {
+        "clause": "1.1",
+        "agreedText": "Payment within 15 days."
+      }
+    ],
+    "maxRowGrowth": 0
+  }
+}

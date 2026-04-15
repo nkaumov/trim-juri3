@@ -1,0 +1,8 @@
+{
+  "type": "client-protocol",
+  "title": "Client sends protocol",
+  "extractedText": "1.1 Payment within 10 days.\n1.2 Penalty 0.1% per day.",
+  "expectations": {
+    "expectedClausesPresent": ["1.1", "1.2"]
+  }
+}

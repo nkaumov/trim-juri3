@@ -1,0 +1,9 @@
+{
+  "type": "client-points",
+  "title": "Initial client points",
+  "extractedText": "1.1 Delivery within 48 hours.\n1.3 Acceptance act within 3 days.\n2.1.2 Review request within 24 hours.",
+  "expectations": {
+    "expectedClausesPresent": ["1.1", "1.3", "2.1.2"],
+    "maxRowGrowth": 3
+  }
+}

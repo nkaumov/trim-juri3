@@ -1,8 +1,6 @@
 import { NextResponse } from "next/server";
-import { randomUUID } from "node:crypto";
-import fs from "node:fs/promises";
-import path from "node:path";
 import mammoth from "mammoth";
+import PizZip from "pizzip";
 import { requireSessionUser } from "@/lib/auth";
 import { getStore, setStore } from "@/lib/storage-server";
 import { getDocument } from "@/lib/documents";
@@ -12,6 +10,9 @@ import type {
   ProtocolRequestLog,
   ProtocolRow,
 } from "@/lib/contracts/types";
+import { runProtocolEngine } from "@/lib/contracts/protocol-engine.mjs";
+import fs from "node:fs/promises";
+import path from "node:path";
 
 export const runtime = "nodejs";
 
@@ -20,6 +21,7 @@ type AiResult = {
   recommendation?: string;
   rows?: ProtocolRow[];
   comments?: ProtocolComment[];
+  logId?: string;
 };
 
 const allowedModes: ProtocolInputMode[] = [
@@ -27,6 +29,7 @@ const allowedModes: ProtocolInputMode[] = [
   "client-points",
   "client-protocol",
   "edited-template",
+  "commented-template",
   "protocol-sync",
 ];
 
@@ -40,219 +43,10 @@ function extractDocumentId(fileUrl: string): string | null {
   return null;
 }
 
-function normalizeSpace(value: string): string {
-  return value.replace(/\s+/g, " ").trim();
-}
-
-function normalizeComparable(value: string): string {
-  return normalizeSpace(value).toLowerCase();
-}
-
 function parseMode(value: string): ProtocolInputMode {
   return allowedModes.includes(value as ProtocolInputMode)
     ? (value as ProtocolInputMode)
     : "client-points";
-}
-
-function normalizeRow(row: Partial<ProtocolRow>): ProtocolRow {
-  return {
-    clause: normalizeSpace(String(row.clause ?? "")),
-    clientText: normalizeSpace(String(row.clientText ?? "")),
-    ourText: normalizeSpace(String(row.ourText ?? "")),
-    agreedText: normalizeSpace(String(row.agreedText ?? "")),
-  };
-}
-
-function mergeText(current: string, next: string): string {
-  return normalizeSpace(next) || normalizeSpace(current);
-}
-
-function rowSignature(row: ProtocolRow): string {
-  return [
-    normalizeComparable(row.clause),
-    normalizeComparable(row.clientText),
-    normalizeComparable(row.ourText ?? ""),
-    normalizeComparable(row.agreedText ?? ""),
-  ].join("||");
-}
-
-function isMeaningfulRow(row: ProtocolRow): boolean {
-  return Boolean(
-    normalizeSpace(row.clause) ||
-      normalizeSpace(row.clientText) ||
-      normalizeSpace(row.ourText ?? "") ||
-      normalizeSpace(row.agreedText ?? ""),
-  );
-}
-
-function mergeTwoRows(current: ProtocolRow, incoming: ProtocolRow): ProtocolRow {
-  return {
-    clause: mergeText(current.clause, incoming.clause),
-    clientText: mergeText(current.clientText, incoming.clientText),
-    ourText: mergeText(current.ourText ?? "", incoming.ourText ?? ""),
-    agreedText: mergeText(current.agreedText ?? "", incoming.agreedText ?? ""),
-  };
-}
-
-function canReplaceClientText(current: ProtocolRow, incoming: ProtocolRow): boolean {
-  const currentText = normalizeComparable(current.clientText);
-  const incomingText = normalizeComparable(incoming.clientText);
-
-  if (!incomingText) return false;
-  if (!currentText) return true;
-  if (currentText === incomingText) return true;
-
-  const hasOurText = Boolean(normalizeComparable(current.ourText ?? ""));
-  const hasAgreedText = Boolean(normalizeComparable(current.agreedText ?? ""));
-
-  return !hasOurText && !hasAgreedText;
-}
-
-function dedupeRows(rows: ProtocolRow[]): ProtocolRow[] {
-  const map = new Map<string, ProtocolRow>();
-
-  for (const row of rows.map(normalizeRow)) {
-    if (!isMeaningfulRow(row)) continue;
-
-    const signature = rowSignature(row);
-    const previous = map.get(signature);
-
-    if (!previous) {
-      map.set(signature, row);
-      continue;
-    }
-
-    map.set(signature, mergeTwoRows(previous, row));
-  }
-
-  return Array.from(map.values());
-}
-
-function mergeRows(existingRows: ProtocolRow[], incomingRows: ProtocolRow[]): ProtocolRow[] {
-  const result = existingRows.map(normalizeRow);
-
-  for (const rawRow of incomingRows) {
-    const incoming = normalizeRow(rawRow);
-    if (!isMeaningfulRow(incoming)) continue;
-
-    const exactIndex = result.findIndex((row) => rowSignature(row) === rowSignature(incoming));
-    if (exactIndex >= 0) {
-      result[exactIndex] = mergeTwoRows(result[exactIndex], incoming);
-      continue;
-    }
-
-    const sameClauseIndexes = incoming.clause
-      ? result.reduce<number[]>((acc, row, index) => {
-          if (normalizeComparable(row.clause) === normalizeComparable(incoming.clause)) {
-            acc.push(index);
-          }
-          return acc;
-        }, [])
-      : [];
-
-    if (sameClauseIndexes.length === 1) {
-      const index = sameClauseIndexes[0];
-      const current = result[index];
-      const sameClientText =
-        normalizeComparable(current.clientText) === normalizeComparable(incoming.clientText);
-
-      if (sameClientText || canReplaceClientText(current, incoming)) {
-        result[index] = {
-          clause: mergeText(current.clause, incoming.clause),
-          clientText: canReplaceClientText(current, incoming)
-            ? mergeText(current.clientText, incoming.clientText)
-            : current.clientText,
-          ourText: mergeText(current.ourText ?? "", incoming.ourText ?? ""),
-          agreedText: mergeText(current.agreedText ?? "", incoming.agreedText ?? ""),
-        };
-        continue;
-      }
-    }
-
-    const sameClientIndex = incoming.clientText
-      ? result.findIndex(
-          (row) => normalizeComparable(row.clientText) === normalizeComparable(incoming.clientText),
-        )
-      : -1;
-
-    if (sameClientIndex >= 0) {
-      result[sameClientIndex] = mergeTwoRows(result[sameClientIndex], incoming);
-      continue;
-    }
-
-    result.push(incoming);
-  }
-
-  return dedupeRows(result);
-}
-
-function normalizeComment(
-  item: Partial<ProtocolComment>,
-  fallbackIndex: number,
-): ProtocolComment {
-  const severity =
-    item.severity === "critical" || item.severity === "moderate" || item.severity === "minor"
-      ? item.severity
-      : "minor";
-
-  return {
-    id: normalizeSpace(String(item.id ?? "")) || String(fallbackIndex),
-    clause: normalizeSpace(String(item.clause ?? "")),
-    was: normalizeSpace(String(item.was ?? "")),
-    now: normalizeSpace(String(item.now ?? "")),
-    severity,
-    comment: normalizeSpace(String(item.comment ?? "")),
-    guidance: normalizeSpace(String(item.guidance ?? "")),
-  };
-}
-
-function commentPriority(value: ProtocolComment["severity"]): number {
-  if (value === "critical") return 3;
-  if (value === "moderate") return 2;
-  return 1;
-}
-
-function commentKey(item: ProtocolComment): string {
-  return [
-    normalizeComparable(item.clause),
-    normalizeComparable(item.now),
-    normalizeComparable(item.comment),
-  ].join("||");
-}
-
-function mergeComments(
-  existingComments: ProtocolComment[],
-  incomingComments: ProtocolComment[],
-): ProtocolComment[] {
-  const map = new Map<string, ProtocolComment>();
-
-  for (const [index, raw] of [...existingComments, ...incomingComments].entries()) {
-    const comment = normalizeComment(raw, index);
-    if (!comment.clause && !comment.was && !comment.now && !comment.comment) continue;
-
-    const key = commentKey(comment);
-    const previous = map.get(key);
-
-    if (!previous) {
-      map.set(key, comment);
-      continue;
-    }
-
-    map.set(key, {
-      id: previous.id || comment.id,
-      clause: mergeText(previous.clause, comment.clause),
-      was: mergeText(previous.was, comment.was),
-      now: mergeText(previous.now, comment.now),
-      severity:
-        commentPriority(comment.severity) > commentPriority(previous.severity)
-          ? comment.severity
-          : previous.severity,
-      comment: mergeText(previous.comment, comment.comment),
-      guidance: mergeText(previous.guidance ?? "", comment.guidance ?? ""),
-    });
-  }
-
-  return Array.from(map.values());
 }
 
 async function extractText(buffer: Buffer, fileName: string): Promise<string> {
@@ -284,6 +78,55 @@ async function extractText(buffer: Buffer, fileName: string): Promise<string> {
   }
 
   return "";
+}
+
+function extractDocxComments(buffer: Buffer): string[] {
+  try {
+    const zip = new PizZip(buffer);
+    const commentsXml = zip.file("word/comments.xml");
+    if (!commentsXml) return [];
+    const xml = commentsXml.asText();
+    const comments: string[] = [];
+    const commentBlocks = xml.match(/<w:comment[\s\S]*?<\/w:comment>/g) || [];
+    for (const block of commentBlocks) {
+      const texts = block.match(/<w:t[^>]*>[\s\S]*?<\/w:t>/g) || [];
+      const value = texts
+        .map((text) => text.replace(/<[^>]+>/g, ""))
+        .join("")
+        .trim();
+      if (value) comments.push(value);
+    }
+    return comments;
+  } catch {
+    return [];
+  }
+}
+
+function normalizeSpace(value: string): string {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function extractDiffLines(templateText: string, fileText: string): string {
+  const templateLines = templateText
+    .split(/\r?\n/)
+    .map((line) => normalizeSpace(line))
+    .filter((line) => line.length > 6);
+  const fileLines = fileText
+    .split(/\r?\n/)
+    .map((line) => normalizeSpace(line))
+    .filter((line) => line.length > 6);
+
+  const templateSet = new Set(templateLines.map((line) => line.toLowerCase()));
+  const diffLines: string[] = [];
+
+  for (const line of fileLines) {
+    const key = line.toLowerCase();
+    if (!templateSet.has(key)) {
+      diffLines.push(line);
+    }
+  }
+
+  return diffLines.join("\n");
 }
 
 async function readPrompt(): Promise<string> {
@@ -379,7 +222,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "missing contractId" }, { status: 400 });
     }
 
-    const contracts = await getStore<any[]>("contracts_store", scope);
+    const contracts = await getStore<Record<string, unknown>[]>("contracts_store", scope);
     const list = Array.isArray(contracts) ? contracts : [];
     const contract = list.find((item) => item?.id === contractId);
 
@@ -400,7 +243,7 @@ export async function POST(request: Request) {
     let rulesText = "";
     let lawsText = "";
 
-    const knowledge = await getStore<any[]>("knowledge_store", scope);
+    const knowledge = await getStore<Record<string, unknown>[]>("knowledge_store", scope);
     if (Array.isArray(knowledge)) {
       const rulesDocs = knowledge.filter((item) => item?.section === "rules" && item?.fileUrl);
       const lawsDocs = knowledge.filter((item) => item?.section === "laws" && item?.fileUrl);
@@ -428,7 +271,19 @@ export async function POST(request: Request) {
     if (file) {
       const buffer = Buffer.from(await file.arrayBuffer());
       const fileText = await extractText(buffer, file.name);
-      newInputText = [message, fileText].filter(Boolean).join("\n\n");
+      const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
+      const commentText = ext === "docx" ? extractDocxComments(buffer).join("\n") : "";
+      if (mode === "edited-template") {
+        const diffText = templateText ? extractDiffLines(templateText, fileText) : fileText;
+        newInputText = [message, diffText].filter(Boolean).join("\n\n");
+      } else if (mode === "commented-template") {
+        const normalizedComments = commentText || fileText;
+        newInputText = [message, normalizedComments ? `Document comments:\n${normalizedComments}` : ""]
+          .filter(Boolean)
+          .join("\n\n");
+      } else {
+        newInputText = [message, fileText].filter(Boolean).join("\n\n");
+      }
     }
 
     if (!newInputText.trim()) {
@@ -471,47 +326,37 @@ export async function POST(request: Request) {
       requestHistory,
     });
 
-    if (
-      !aiResult ||
-      (!Array.isArray(aiResult.rows) && !Array.isArray(aiResult.comments))
-    ) {
+    const engineResult = await runProtocolEngine({
+      mode,
+      templateText,
+      existingRows,
+      existingComments,
+      existingProtocolText,
+      newInputText,
+      rulesText,
+      lawsText,
+      requestHistory,
+      aiAdapter: async () => aiResult,
+      now: new Date().toISOString(),
+    });
+
+    if (!engineResult.usedAi) {
       return NextResponse.json({ error: "ai_failed" }, { status: 500 });
     }
 
-    const normalizedIncomingRows = Array.isArray(aiResult.rows)
-      ? aiResult.rows.map(normalizeRow)
-      : [];
-
-    const normalizedIncomingComments = Array.isArray(aiResult.comments)
-      ? aiResult.comments.map((item, index) => normalizeComment(item, index))
-      : [];
-
-    const mergedRows = mergeRows(existingRows, normalizedIncomingRows);
-    const mergedComments = mergeComments(existingComments, normalizedIncomingComments);
-
-    const now = new Date().toISOString();
-
-    const logEntry: ProtocolRequestLog = {
-      id: randomUUID(),
-      mode,
-      text: normalizeSpace(newInputText),
-      fileName: file?.name || undefined,
-      fileType: file?.type || undefined,
-      createdAt: now,
-      summary: normalizeSpace(String(aiResult.summary || "")) || undefined,
-    };
+    const logEntry = engineResult.logEntry as ProtocolRequestLog;
 
     const updated = list.map((item) => {
       if (!item || item.id !== contractId) return item;
 
       return {
         ...item,
-        protocolRows: mergedRows,
-        protocolComments: mergedComments,
-        protocolSummary: normalizeSpace(String(aiResult.summary || "")),
-        protocolRecommendation: normalizeSpace(String(aiResult.recommendation || "")),
-        protocolUpdatedAt: now,
-        protocolRequests: [...requestHistory, logEntry].slice(-20),
+        protocolRows: engineResult.rows,
+        protocolComments: engineResult.comments,
+        protocolSummary: engineResult.summary,
+        protocolRecommendation: engineResult.recommendation,
+        protocolUpdatedAt: logEntry.createdAt,
+        protocolRequests: engineResult.requestHistory,
       };
     });
 
@@ -519,10 +364,10 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       ok: true,
-      rows: mergedRows,
-      comments: mergedComments,
-      summary: normalizeSpace(String(aiResult.summary || "")),
-      recommendation: normalizeSpace(String(aiResult.recommendation || "")),
+      rows: engineResult.rows,
+      comments: engineResult.comments,
+      summary: engineResult.summary,
+      recommendation: engineResult.recommendation,
       logEntry,
     });
   } catch (error) {

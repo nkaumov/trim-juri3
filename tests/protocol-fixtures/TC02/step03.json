@@ -1,0 +1,15 @@
+{
+  "type": "client-freeform",
+  "title": "Client changes clause 1.1",
+  "message": "Change clause 1.1 to payment within 7 days.",
+  "extractedText": "1.1 Payment within 7 days.",
+  "expectations": {
+    "expectedClausesPresent": ["1.1", "1.2"],
+    "manualFields": [
+      {
+        "clause": "1.1",
+        "agreedText": "Payment within 15 days."
+      }
+    ]
+  }
+}

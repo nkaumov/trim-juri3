@@ -82,6 +82,8 @@
   "contract.branch.clientProtocol.desc": "Upload the client's disagreement protocol file.",
   "contract.branch.editedTemplate.title": "Client sent template with edits",
   "contract.branch.editedTemplate.desc": "Upload the contract with client edits for comparison.",
+  "contract.branch.commentedTemplate.title": "Client sent template comments",
+  "contract.branch.commentedTemplate.desc": "Upload a file with client comments (Word comments).",
   "contract.finalize.title": "Finish working on the document?",
   "contract.finalize.text": "After completion, only the Final Document tab will remain. Editing will be disabled.",
   "contract.finalize.cancel": "Cancel",

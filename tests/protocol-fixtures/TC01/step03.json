@@ -1,0 +1,15 @@
+{
+  "type": "client-freeform",
+  "title": "Client follow-up request",
+  "message": "Please add clause 3.2 about liability limits.",
+  "extractedText": "3.2 Liability limited to 10% of contract value.",
+  "expectations": {
+    "expectedClausesPresent": ["1.1", "3.2"],
+    "manualFields": [
+      {
+        "clause": "1.1",
+        "ourText": "We can confirm 72 hours as a standard timeline."
+      }
+    ]
+  }
+}

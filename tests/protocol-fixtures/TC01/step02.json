@@ -1,0 +1,19 @@
+{
+  "type": "manual-edit",
+  "title": "Legal team adds response",
+  "patchRows": [
+    {
+      "clause": "1.1",
+      "ourText": "We can confirm 72 hours as a standard timeline."
+    }
+  ],
+  "expectations": {
+    "manualFields": [
+      {
+        "clause": "1.1",
+        "ourText": "We can confirm 72 hours as a standard timeline."
+      }
+    ],
+    "noGrowth": true
+  }
+}

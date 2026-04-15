@@ -1,7 +1,9 @@
-import { NextResponse } from "next/server";
-import { requireSessionUser } from "@/lib/auth";
-import { getStore } from "@/lib/storage-server";
+﻿import { NextResponse } from "next/server";
+import mammoth from "mammoth";
 import PizZip from "pizzip";
+import { requireSessionUser } from "@/lib/auth";
+import { getStore, setStore } from "@/lib/storage-server";
+import { getDocument, saveDocument } from "@/lib/documents";
 
 export const runtime = "nodejs";
 
@@ -14,7 +16,10 @@ type ProtocolRow = {
 
 type ContractStoreItem = {
   id: string;
+  templateFileUrl?: string;
+  templateDocId?: string;
   protocolRows?: ProtocolRow[];
+  [key: string]: unknown;
 };
 
 function isContractStoreItem(value: unknown): value is ContractStoreItem {
@@ -36,10 +41,21 @@ function formatCell(text: string): string {
   const parts = safe.split(/\r?\n/);
   return parts
     .map((part, index) =>
-      index === 0
-        ? `<w:t>${part}</w:t>`
-        : `<w:br/><w:t>${part}</w:t>`,
+      index === 0 ? `<w:t>${part}</w:t>` : `<w:br/><w:t>${part}</w:t>`,
     )
+    .join("");
+}
+
+function buildParagraphs(text: string): string {
+  const lines = String(text || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length === 0) {
+    return `<w:p><w:r><w:t></w:t></w:r></w:p>`;
+  }
+  return lines
+    .map((line) => `<w:p><w:r>${formatCell(line)}</w:r></w:p>`)
     .join("");
 }
 
@@ -119,12 +135,15 @@ function buildSignatureBlock(): string {
   `;
 }
 
-function buildDocx(rows: ProtocolRow[]) {
+function buildFinalDocx(templateText: string, rows: ProtocolRow[]) {
+  const templateXml = buildParagraphs(templateText);
   const tableXml = buildTable(rows);
   const signatureXml = buildSignatureBlock();
   const documentXml = `<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>
 <w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">
   <w:body>
+    ${templateXml}
+    <w:p><w:r><w:t>\n</w:t></w:r></w:p>
     <w:p><w:r><w:t>\u041f\u0420\u041e\u0422\u041e\u041a\u041e\u041b \u0420\u0410\u0417\u041d\u041e\u0413\u041b\u0410\u0421\u0418\u0419</w:t></w:r></w:p>
     ${tableXml}
     ${signatureXml}
@@ -155,33 +174,83 @@ function buildDocx(rows: ProtocolRow[]) {
   return zip.generate({ type: "nodebuffer" });
 }
 
-export async function GET(request: Request) {
+async function extractText(buffer: Buffer, fileName: string): Promise<string> {
+  const ext = fileName.split(".").pop()?.toLowerCase() ?? "";
+  if (ext === "docx") {
+    try {
+      const result = await mammoth.extractRawText({ buffer });
+      return result.value || "";
+    } catch {
+      return "";
+    }
+  }
+  return buffer.toString("utf-8");
+}
+
+function extractDocumentId(fileUrl: string): string | null {
+  if (fileUrl.startsWith("/api/contracts/files/")) {
+    return fileUrl.replace("/api/contracts/files/", "");
+  }
+  if (fileUrl.startsWith("/api/knowledge/files/")) {
+    return fileUrl.replace("/api/knowledge/files/", "");
+  }
+  return null;
+}
+
+export async function POST(request: Request) {
   try {
     const user = await requireSessionUser();
     const scope = { tenantId: user.id, agentId: "jurist3-agent" };
-    const url = new URL(request.url);
-    const contractId = url.searchParams.get("contractId") || "";
+    const body = (await request.json().catch(() => null)) as { contractId?: string } | null;
+    const contractId = String(body?.contractId || "").trim();
     if (!contractId) {
       return NextResponse.json({ error: "missing contractId" }, { status: 400 });
     }
 
     const contracts = await getStore<unknown[]>("contracts_store", scope);
     const list = Array.isArray(contracts) ? contracts.filter(isContractStoreItem) : [];
-    const contract = list.find((item) => item.id === contractId);
+    const contract = list.find((item) => item?.id === contractId);
+
     if (!contract) {
       return NextResponse.json({ error: "contract not found" }, { status: 404 });
     }
-    const rows = Array.isArray(contract.protocolRows) ? contract.protocolRows : [];
-    const buffer = buildDocx(rows);
 
-    return new NextResponse(buffer, {
-      status: 200,
-      headers: {
-        "Content-Type":
-          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "Content-Disposition": "attachment; filename=protocol-disagreement.docx",
-      },
+    const templateDocId = extractDocumentId(contract.templateFileUrl || "") || contract.templateDocId;
+    let templateText = "";
+    if (templateDocId) {
+      const templateDoc = await getDocument(templateDocId, scope);
+      if (templateDoc) {
+        templateText = await extractText(templateDoc.buffer, templateDoc.fileName);
+      }
+    }
+
+    const rows = Array.isArray(contract.protocolRows) ? contract.protocolRows : [];
+    const buffer = buildFinalDocx(templateText, rows);
+    const fileName = `final-contract-${contractId}.docx`;
+
+    const docId = await saveDocument({
+      tenantId: scope.tenantId,
+      agentId: scope.agentId,
+      fileName,
+      mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      buffer,
     });
+
+    const fileUrl = `/api/contracts/files/${docId}`;
+    const updated = list.map((item) => {
+      if (!item || item.id !== contractId) return item;
+      return {
+        ...item,
+        status: "finalized",
+        finalFileUrl: fileUrl,
+        finalFileName: fileName,
+        finalUpdatedAt: new Date().toISOString(),
+      };
+    });
+
+    await setStore("contracts_store", scope, updated);
+
+    return NextResponse.json({ ok: true, fileUrl, fileName });
   } catch (error) {
     const message = error instanceof Error ? error.message : "unknown error";
     if (message.includes("UNAUTHORIZED")) {

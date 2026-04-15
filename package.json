@@ -6,7 +6,8 @@
     "dev": "next dev -H 0.0.0.0 -p 3000",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "protocol:test": "node tools/protocol-regression/run.mjs"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

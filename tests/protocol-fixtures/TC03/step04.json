@@ -1,0 +1,9 @@
+﻿{
+  "type": "protocol-sync",
+  "title": "Sync protocol after cleanup",
+  "extractedText": "1.1 Payment within 10 days.\n2.2 Warranty 24 months.",
+  "expectations": {
+    "expectedClausesPresent": ["1.1", "2.2"],
+    "noGrowth": true
+  }
+}

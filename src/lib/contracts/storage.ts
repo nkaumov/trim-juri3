@@ -47,7 +47,11 @@ export function loadContracts(): ContractDraft[] {
 
       return {
         ...item,
-        status: (item.status === "archived" ? "archived" : "draft") as ContractDraft["status"],
+        status: (item.status === "finalized"
+          ? "finalized"
+          : item.status === "archived"
+            ? "archived"
+            : "draft") as ContractDraft["status"],
         iterations: normalizedIterations,
       };
     });

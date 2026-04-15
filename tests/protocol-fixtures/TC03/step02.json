@@ -1,0 +1,19 @@
+﻿{
+  "type": "manual-edit",
+  "title": "Legal team response",
+  "patchRows": [
+    {
+      "clause": "2.2",
+      "ourText": "We can confirm 18 months warranty."
+    }
+  ],
+  "expectations": {
+    "manualFields": [
+      {
+        "clause": "2.2",
+        "ourText": "We can confirm 18 months warranty."
+      }
+    ],
+    "noGrowth": true
+  }
+}

@@ -1,0 +1,5 @@
+{
+  "templateText": "Contract template. Clause 1.1 describes delivery. Clause 1.3 describes acceptance. Clause 2.1.2 describes request review.",
+  "rulesText": "Rules: delivery must be within agreed timeline. Acceptance terms must be explicit.",
+  "lawsText": "Law: parties must confirm service delivery in writing."
+}

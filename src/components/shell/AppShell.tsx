@@ -108,6 +108,14 @@ export function AppShell() {
   const [composeError, setComposeError] = useState<string | null>(null);
   const [isTemplateDropdownOpen, setIsTemplateDropdownOpen] = useState(false);
   const [knowledgeUploadError, setKnowledgeUploadError] = useState<string | null>(null);
+  const [clientTemplateMeta, setClientTemplateMeta] = useState<{
+    docId: string;
+    fileUrl: string;
+    fileName: string;
+    fileSize: number;
+  } | null>(null);
+  const [clientTemplateUploading, setClientTemplateUploading] = useState(false);
+  const [clientTemplateError, setClientTemplateError] = useState<string | null>(null);
 
   const fileInputsRef = useRef<Record<KnowledgeSection, HTMLInputElement | null>>({
     templates: null,
@@ -115,6 +123,7 @@ export function AppShell() {
     fz: null,
   });
   const templateDropdownRef = useRef<HTMLDivElement | null>(null);
+  const clientTemplateInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -242,34 +251,17 @@ export function AppShell() {
     [contracts, selectedClientId],
   );
   const selectedClientActiveContracts = useMemo(
-    () => selectedClientContracts.filter((item) => item.status !== "archived"),
+    () => selectedClientContracts.filter((item) => item.status === "draft"),
     [selectedClientContracts],
   );
   const selectedClientArchivedContracts = useMemo(
-    () => selectedClientContracts.filter((item) => item.status === "archived"),
+    () => selectedClientContracts.filter((item) => item.status !== "draft"),
     [selectedClientContracts],
   );
   const selectedTemplate = useMemo(
     () => availableTemplates.find((item) => item.id === selectedTemplateId) ?? null,
     [availableTemplates, selectedTemplateId],
   );
-  const docsReady = useMemo(() => {
-    if (!profileSettings.googleDocs.enabled) {
-      return true;
-    }
-
-    return Boolean(
-      profileSettings.googleDocs.driveFolderId.trim() &&
-        profileSettings.googleDocs.credentialsJson.trim(),
-    );
-  }, [profileSettings.googleDocs]);
-  const gmailReady = useMemo(() => {
-    if (!profileSettings.gmail.enabled) {
-      return true;
-    }
-
-    return Boolean(profileSettings.gmail.fromEmail.trim() && profileSettings.gmail.appPassword.trim());
-  }, [profileSettings.gmail]);
 
   function createClient(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -315,6 +307,8 @@ export function AppShell() {
     setIsComposeModalOpen(true);
     setComposeError(null);
     setSelectedTemplateId("");
+    setClientTemplateMeta(null);
+    setClientTemplateError(null);
   }
 
   async function handleLogout() {
@@ -327,6 +321,48 @@ export function AppShell() {
     setComposeError(null);
     setSelectedTemplateId("");
     setIsTemplateDropdownOpen(false);
+    setClientTemplateMeta(null);
+    setClientTemplateError(null);
+  }
+
+  async function handleClientTemplateUpload(file: File | null) {
+    if (!file) {
+      return;
+    }
+    setClientTemplateUploading(true);
+    setClientTemplateError(null);
+    setComposeError(null);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const response = await fetch("/api/contracts/template-upload", {
+        method: "POST",
+        body: formData,
+      });
+      if (!response.ok) {
+        throw new Error("upload failed");
+      }
+      const payload = (await response.json()) as {
+        docId?: string;
+        fileUrl?: string;
+        fileName?: string;
+        fileSize?: number;
+      };
+      if (!payload?.docId || !payload.fileUrl || !payload.fileName) {
+        throw new Error("invalid response");
+      }
+      setSelectedTemplateId("");
+      setClientTemplateMeta({
+        docId: payload.docId,
+        fileUrl: payload.fileUrl,
+        fileName: payload.fileName,
+        fileSize: payload.fileSize ?? file.size,
+      });
+    } catch {
+      setClientTemplateError("Не удалось загрузить договор клиента. Попробуйте еще раз.");
+    } finally {
+      setClientTemplateUploading(false);
+    }
   }
 
   async function createContractDraft(event: FormEvent<HTMLFormElement>) {
@@ -336,41 +372,44 @@ export function AppShell() {
       return;
     }
 
-    if (!selectedTemplateId) {
+    const hasClientTemplate = Boolean(clientTemplateMeta);
+    if (!hasClientTemplate && !selectedTemplateId) {
       setComposeError("Выберите шаблон договора.");
       return;
     }
 
-    const template = availableTemplates.find((item) => item.id === selectedTemplateId);
-    if (!template) {
-      setComposeError("Шаблон не найден. Обновите список шаблонов.");
-      return;
-    }
-    if (!template.fileUrl) {
-      setComposeError("Для шаблона не найден файл. Загрузите шаблон заново.");
-      return;
-    }
-
-    try {
-      const checkResponse = await fetch(template.fileUrl, {
-        method: "HEAD",
-        cache: "no-store",
-      });
-      if (!checkResponse.ok) {
-        setComposeError("Файл шаблона недоступен. Перезагрузите его в Базе знаний.");
+    const template = availableTemplates.find((item) => item.id === selectedTemplateId) ?? null;
+    if (!hasClientTemplate) {
+      if (!template) {
+        setComposeError("Шаблон не найден. Обновите список шаблонов.");
         return;
       }
-    } catch {
-      setComposeError("Не удалось проверить файл шаблона. Попробуйте еще раз.");
-      return;
+      if (!template.fileUrl) {
+        setComposeError("Для шаблона не найден файл. Загрузите шаблон заново.");
+        return;
+      }
+
+      try {
+        const checkResponse = await fetch(template.fileUrl, {
+          method: "HEAD",
+          cache: "no-store",
+        });
+        if (!checkResponse.ok) {
+          setComposeError("Файл шаблона недоступен. Перезагрузите его в Базе знаний.");
+          return;
+        }
+      } catch {
+        setComposeError("Не удалось проверить файл шаблона. Попробуйте еще раз.");
+        return;
+      }
     }
 
     const newDraft: ContractDraft = {
       id: crypto.randomUUID(),
       clientId: selectedClientId,
-      templateDocId: template.id,
-      templateName: template.fileName,
-      templateFileUrl: template.fileUrl,
+      templateDocId: hasClientTemplate ? clientTemplateMeta!.docId : template!.id,
+      templateName: hasClientTemplate ? clientTemplateMeta!.fileName : template!.fileName,
+      templateFileUrl: hasClientTemplate ? clientTemplateMeta!.fileUrl : template!.fileUrl,
       createdAt: new Date().toISOString(),
       status: "draft",
       iterations: [
@@ -378,7 +417,7 @@ export function AppShell() {
           id: crypto.randomUUID(),
           title: "Договор создан",
           content:
-            `Шаблон договора: ${template.fileName}\n\n` +
+            `Шаблон договора: ${hasClientTemplate ? clientTemplateMeta!.fileName : template!.fileName}\n\n` +
             "Исходная версия создана на основе выбранного шаблона.\n" +
             "Следующие итерации фиксируют изменения в процессе согласования.",
           updatedAt: new Date().toISOString(),
@@ -481,30 +520,10 @@ export function AppShell() {
     );
   }
 
-  function updateGoogleDocsSettings(next: Partial<ProfileSettings["googleDocs"]>) {
-    setProfileSettings((prev) => ({
-      ...prev,
-      googleDocs: {
-        ...prev.googleDocs,
-        ...next,
-      },
-    }));
-  }
-
-  function updateGmailSettings(next: Partial<ProfileSettings["gmail"]>) {
-    setProfileSettings((prev) => ({
-      ...prev,
-      gmail: {
-        ...prev.gmail,
-        ...next,
-      },
-    }));
-  }
-
   function renderContractsSection() {
     if (selectedClient) {
       return (
-        <section className="workspace-stack">
+        <section className="workspace-stack contracts-client-stack">
           <div className="workspace-header">
             <div className="workspace-header__controls">
               <button
@@ -543,7 +562,7 @@ export function AppShell() {
           </article>
 
           {contractsViewMode === "active" ? (
-            <article className="card">
+            <article className="card contracts-list-card">
               <h3>Черновики договоров</h3>
               {selectedClientActiveContracts.length === 0 ? (
                 <p className="muted-text">
@@ -574,7 +593,7 @@ export function AppShell() {
               )}
             </article>
           ) : (
-            <article className="card">
+            <article className="card contracts-list-card">
               <h3>Архив договоров</h3>
               {selectedClientArchivedContracts.length === 0 ? (
                 <p className="muted-text">Архив пуст.</p>
@@ -584,7 +603,9 @@ export function AppShell() {
                     <div className="draft-card" key={draft.id}>
                       <div className="draft-card__title">{draft.templateName}</div>
                       <div className="draft-card__meta">Создан: {formatDate(draft.createdAt)}</div>
-                      <div className="draft-card__meta">Статус: завершен</div>
+                      <div className="draft-card__meta">
+                        Статус: {draft.status === "finalized" ? "завершен" : "архив"}
+                      </div>
                       <div className="draft-card__actions">
                         <Link className="ghost-btn ghost-btn--inline" href={`/contracts/${draft.id}`}>
                           Открыть договор
@@ -611,15 +632,64 @@ export function AppShell() {
                 <h3>Составить договор</h3>
                 <form className="client-form" onSubmit={createContractDraft}>
                   <label className="field">
+                    <span>Договор по форме клиента (опционально)</span>
+                    <div className="contract-upload">
+                      <button
+                        className="ghost-btn ghost-btn--inline"
+                        type="button"
+                        disabled={clientTemplateUploading}
+                        onClick={() => clientTemplateInputRef.current?.click()}
+                      >
+                        Прикрепить договор по форме клиента
+                      </button>
+                      <input
+                        ref={clientTemplateInputRef}
+                        className="hidden-file-input"
+                        type="file"
+                        onChange={(event) => {
+                          const file = event.currentTarget.files?.[0] ?? null;
+                          event.currentTarget.value = "";
+                          void handleClientTemplateUpload(file);
+                        }}
+                      />
+                    </div>
+                  </label>
+
+                  {clientTemplateMeta ? (
+                    <div className="template-attachment">
+                      <div>
+                        <strong>{clientTemplateMeta.fileName}</strong>
+                        <span className="muted-text">
+                          {formatFileSize(clientTemplateMeta.fileSize)}
+                        </span>
+                      </div>
+                      <button
+                        className="ghost-btn ghost-btn--inline"
+                        type="button"
+                        onClick={() => setClientTemplateMeta(null)}
+                      >
+                        Удалить
+                      </button>
+                    </div>
+                  ) : null}
+
+                  {clientTemplateError ? <p className="form-error">{clientTemplateError}</p> : null}
+
+                  <label className="field">
                     <span>Выберите шаблон договора *</span>
                     <div className="template-dropdown" ref={templateDropdownRef}>
                       <button
                         className={`template-dropdown__trigger ${isTemplateDropdownOpen ? "open" : ""}`}
                         onClick={() => setIsTemplateDropdownOpen((prev) => !prev)}
                         type="button"
+                        disabled={Boolean(clientTemplateMeta)}
                       >
                         <span className={selectedTemplate ? "" : "template-dropdown__placeholder"}>
-                          {selectedTemplate ? selectedTemplate.fileName : "Выберите шаблон"}
+                          {clientTemplateMeta
+                            ? "Шаблон выбран через договор клиента"
+                            : selectedTemplate
+                              ? selectedTemplate.fileName
+                              : "Выберите шаблон"}
                         </span>
                         <span className="template-dropdown__arrow" aria-hidden="true">
                           ▾
@@ -656,7 +726,7 @@ export function AppShell() {
                     </div>
                   </label>
 
-                  {availableTemplates.length === 0 ? (
+                  {!clientTemplateMeta && availableTemplates.length === 0 ? (
                     <p className="form-error">
                       В разделе &quot;База знаний → Шаблоны&quot; пока нет документов. Сначала
                       добавьте шаблон.
@@ -669,7 +739,11 @@ export function AppShell() {
                     <button className="ghost-btn" onClick={closeComposeModal} type="button">
                       Отмена
                     </button>
-                    <button className="primary" disabled={availableTemplates.length === 0} type="submit">
+                    <button
+                      className="primary"
+                      disabled={!clientTemplateMeta && availableTemplates.length === 0}
+                      type="submit"
+                    >
                       Создать черновик
                     </button>
                   </div>
@@ -904,129 +978,44 @@ export function AppShell() {
       <section className="workspace-stack">
         <div className="workspace-header">
           <h1>Настройки</h1>
-          <p>
-            Интеграции с Google сервисами. Чекбокс &quot;Включить&quot; означает, что модуль
-            работает параллельно.
-          </p>
+          <p>Интеграции с Google сервисами будут доступны в одном из следующих обновлений.</p>
         </div>
 
         <article className="card profile-card">
           <div className="profile-card__head">
             <h3>Google Docs</h3>
-            <span className={`integration-status ${docsReady ? "ok" : "bad"}`}>
-              {docsReady ? "Готово" : "Незаполнено"}
-            </span>
+            <span className="integration-status warn">Скоро</span>
           </div>
 
-          <label className="toggle-row">
-            <input
-              checked={profileSettings.googleDocs.enabled}
-              onChange={(event) => updateGoogleDocsSettings({ enabled: event.target.checked })}
-              type="checkbox"
-            />
-            <span>Включить</span>
+          <label className="toggle-row toggle-row--disabled">
+            <input checked={false} disabled type="checkbox" />
+            <span>Включить (скоро)</span>
           </label>
 
-          {profileSettings.googleDocs.enabled ? (
-            <div className="client-form">
-              <label className="field">
-                <span>ID папки в Google Drive</span>
-                <input
-                  onChange={(event) => updateGoogleDocsSettings({ driveFolderId: event.target.value })}
-                  placeholder="1abcDEFghIJK..."
-                  type="text"
-                  value={profileSettings.googleDocs.driveFolderId}
-                />
-              </label>
-
-              <label className="field">
-                <span>Service Account JSON / ключ</span>
-                <textarea
-                  onChange={(event) => updateGoogleDocsSettings({ credentialsJson: event.target.value })}
-                  placeholder="JSON сервисного аккаунта или ссылка на секрет"
-                  rows={5}
-                  value={profileSettings.googleDocs.credentialsJson}
-                />
-              </label>
-            </div>
-          ) : (
-            <div className="integration-hidden" />
-          )}
+          <div className="integration-hidden" />
 
           <p className="integration-help">
-            1) Создайте Service Account в Google Cloud и включите Drive API + Docs API. 2) Дайте
-            этому аккаунту доступ к папке в Google Drive (Editor). 3) Вставьте ID папки и JSON ключ.
-            После этого система сможет создавать и вести Google Документы по договорам.
+            Интеграция Google Docs готовится к запуску. Настройка и включение станут доступны в
+            следующем обновлении.
           </p>
         </article>
 
         <article className="card profile-card">
           <div className="profile-card__head">
             <h3>Gmail</h3>
-            <span className={`integration-status ${gmailReady ? "ok" : "bad"}`}>
-              {gmailReady ? "Готово" : "Незаполнено"}
-            </span>
+            <span className="integration-status warn">Скоро</span>
           </div>
 
-          <label className="toggle-row">
-            <input
-              checked={profileSettings.gmail.enabled}
-              onChange={(event) => updateGmailSettings({ enabled: event.target.checked })}
-              type="checkbox"
-            />
-            <span>Включить</span>
+          <label className="toggle-row toggle-row--disabled">
+            <input checked={false} disabled type="checkbox" />
+            <span>Включить (скоро)</span>
           </label>
 
-          {profileSettings.gmail.enabled ? (
-            <div className="profile-grid">
-              <label className="field">
-                <span>Отправитель (Gmail)</span>
-                <input
-                  onChange={(event) => updateGmailSettings({ fromEmail: event.target.value })}
-                  placeholder="legal@company.com"
-                  type="email"
-                  value={profileSettings.gmail.fromEmail}
-                />
-              </label>
-
-              <label className="field">
-                <span>Пароль приложения</span>
-                <input
-                  onChange={(event) => updateGmailSettings({ appPassword: event.target.value })}
-                  placeholder="xxxx xxxx xxxx xxxx"
-                  type="password"
-                  value={profileSettings.gmail.appPassword}
-                />
-              </label>
-
-              <label className="field">
-                <span>SMTP host</span>
-                <input
-                  onChange={(event) => updateGmailSettings({ smtpHost: event.target.value })}
-                  placeholder="smtp.gmail.com"
-                  type="text"
-                  value={profileSettings.gmail.smtpHost}
-                />
-              </label>
-
-              <label className="field">
-                <span>SMTP port</span>
-                <input
-                  onChange={(event) => updateGmailSettings({ smtpPort: event.target.value })}
-                  placeholder="465"
-                  type="text"
-                  value={profileSettings.gmail.smtpPort}
-                />
-              </label>
-            </div>
-          ) : (
-            <div className="integration-hidden" />
-          )}
+          <div className="integration-hidden" />
 
           <p className="integration-help">
-            1) В Gmail включите двухфакторную аутентификацию. 2) Создайте App Password в разделе
-            безопасности Google аккаунта. 3) Укажите почту отправителя и App Password. После этого
-            можно отправлять итерации клиенту напрямую из системы.
+            Интеграция Gmail готовится к запуску. Настройка и включение станут доступны в следующем
+            обновлении.
           </p>
         </article>
       </section>
@@ -1045,30 +1034,32 @@ export function AppShell() {
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <div className="brand">
-          <div>
-            <h1 className="brand__title">Jurist3</h1>
-            <span className="brand__tag">Документооборот и согласование договоров</span>
+        <div className="sidebar-main">
+          <div className="brand">
+            <div>
+              <h1 className="brand__title">Jurist3</h1>
+              <span className="brand__tag">Документооборот и согласование договоров</span>
+            </div>
           </div>
+
+          <section className="sidebar-block">
+            <h2>Разделы</h2>
+            <div className="sidebar-nav">
+              {navItems.map((item) => (
+                <button
+                  className={activeSection === item.id ? "active" : ""}
+                  key={item.id}
+                  onClick={() => setActiveSection(item.id)}
+                  type="button"
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          </section>
         </div>
 
-        <section className="sidebar-block">
-          <h2>Разделы</h2>
-          <div className="sidebar-nav">
-            {navItems.map((item) => (
-              <button
-                className={activeSection === item.id ? "active" : ""}
-                key={item.id}
-                onClick={() => setActiveSection(item.id)}
-                type="button"
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
-        </section>
-
-        <section className="sidebar-block">
+        <section className="sidebar-block sidebar-logout">
           <button className="ghost-btn" onClick={handleLogout} type="button">
             Выйти
           </button>

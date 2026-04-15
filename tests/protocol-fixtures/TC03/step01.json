@@ -1,0 +1,9 @@
+﻿{
+  "type": "client-freeform",
+  "title": "Freeform with duplicates",
+  "extractedText": "1.1 Payment within 10 days.\n1.1 Payment within 10 days.\n2.2 Warranty 12 months.",
+  "expectations": {
+    "expectedClausesPresent": ["1.1", "2.2"],
+    "maxRowGrowth": 2
+  }
+}

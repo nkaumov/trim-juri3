@@ -44,6 +44,7 @@ export type ProtocolInputMode =
   | "client-points"
   | "client-protocol"
   | "edited-template"
+  | "commented-template"
   | "protocol-sync";
 
 export type ProtocolRow = {
@@ -79,6 +80,9 @@ export type ContractDraft = {
   templateDocId: string;
   templateName: string;
   templateFileUrl?: string;
+  finalFileUrl?: string;
+  finalFileName?: string;
+  finalUpdatedAt?: string;
   protocolFileUrl?: string;
   protocolFileName?: string;
   protocolUpdatedAt?: string;
@@ -88,6 +92,6 @@ export type ContractDraft = {
   protocolRecommendation?: string;
   protocolRequests?: ProtocolRequestLog[];
   createdAt: string;
-  status: "draft" | "archived";
+  status: "draft" | "archived" | "finalized";
   iterations: ContractIteration[];
 };
