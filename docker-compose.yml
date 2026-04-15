@@ -4,16 +4,19 @@
       context: .
       dockerfile: Dockerfile
     ports:
-      - "3001:3000"
+      - "3002:3000"
     env_file:
       - .env
+    networks:
+      - default
+      - platform_net
     restart: unless-stopped
 
   jurist3-db:
     image: postgres:16-alpine
     container_name: jurist3-db
     ports:
-      - "5433:5432"
+      - "5434:5432"
     environment:
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
@@ -26,7 +29,7 @@
     image: onlyoffice/documentserver:latest
     container_name: jurist3-onlyoffice
     ports:
-      - "8080:80"
+      - "8085:80"
     environment:
       - JWT_ENABLED=false
       - ALLOW_PRIVATE_IP_ADDRESS=true
@@ -35,3 +38,8 @@
 
 volumes:
   jurist3_db:
+
+networks:
+  platform_net:
+    external: true
+    name: platform_default

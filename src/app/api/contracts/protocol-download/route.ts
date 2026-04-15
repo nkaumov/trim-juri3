@@ -173,8 +173,9 @@ export async function GET(request: Request) {
     }
     const rows = Array.isArray(contract.protocolRows) ? contract.protocolRows : [];
     const buffer = buildDocx(rows);
+    const body = new Uint8Array(buffer);
 
-    return new NextResponse(buffer, {
+    return new NextResponse(body, {
       status: 200,
       headers: {
         "Content-Type":

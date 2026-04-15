@@ -17,7 +17,7 @@ npm install
 npm run dev
 ```
 
-Приложение: `http://localhost:3000`.
+Приложение: `http://localhost:3002`.
 
 ## Docker
 

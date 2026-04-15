@@ -13,7 +13,7 @@ export async function getStore<T>(table: TableName, scope: StorageScope): Promis
     `SELECT data FROM ${table} WHERE tenant_id = $1 AND agent_id = $2`,
     [scope.tenantId, scope.agentId],
   );
-  if (result.rowCount === 0) {
+  if ((result.rowCount ?? 0) === 0) {
     if (table === "profile_store") {
       return {} as T;
     }

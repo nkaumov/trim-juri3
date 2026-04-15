@@ -94,6 +94,15 @@ export function AppShell() {
       smtpHost: "smtp.gmail.com",
       smtpPort: "465",
     },
+    companyAutofill: {
+      legalName: "",
+      inn: "",
+      kpp: "",
+      ogrn: "",
+      signerName: "",
+      signerRole: "",
+      legalAddress: "",
+    },
   };
   const [profileSettings, setProfileSettings] = useState<ProfileSettings>(defaultProfile);
 
@@ -169,6 +178,10 @@ export function AppShell() {
           gmail: {
             ...defaultProfile.gmail,
             ...(profilePayload.data as ProfileSettings).gmail,
+          },
+          companyAutofill: {
+            ...defaultProfile.companyAutofill,
+            ...(profilePayload.data as ProfileSettings).companyAutofill,
           },
         });
       }

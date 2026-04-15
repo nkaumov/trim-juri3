@@ -97,6 +97,7 @@ export function OnlyOfficeViewer({ fileUrl, fileName, mode = "view" }: Props) {
 
   useEffect(() => {
     if (!signed || !containerRef.current) return;
+    const signedData = signed;
 
     const onlyOfficeUrl = process.env.NEXT_PUBLIC_ONLYOFFICE_URL || "";
     if (!onlyOfficeUrl) {
@@ -130,8 +131,8 @@ export function OnlyOfficeViewer({ fileUrl, fileName, mode = "view" }: Props) {
       const callbackUrl =
         mode === "edit"
           ? withBaseUrl(
-              `/api/contracts/onlyoffice-callback?docId=${encodeURIComponent(signed.docId)}` +
-                `&token=${encodeURIComponent(signed.token)}&exp=${signed.exp}` +
+              `/api/contracts/onlyoffice-callback?docId=${encodeURIComponent(signedData.docId)}` +
+                `&token=${encodeURIComponent(signedData.token)}&exp=${signedData.exp}` +
                 `&tenantId=${encodeURIComponent(tenantId)}&agentId=${encodeURIComponent(agentId)}`,
             )
           : undefined;
@@ -139,9 +140,9 @@ export function OnlyOfficeViewer({ fileUrl, fileName, mode = "view" }: Props) {
       const config = {
         document: {
           fileType,
-          key: `${signed.docId}-${signed.exp}`,
-          title: fileName ?? signed.docId,
-          url: withBaseUrl(signed.url),
+          key: `${signedData.docId}-${signedData.exp}`,
+          title: fileName ?? signedData.docId,
+          url: withBaseUrl(signedData.url),
           permissions: {
             edit: mode === "edit",
             download: true,
@@ -183,7 +184,7 @@ export function OnlyOfficeViewer({ fileUrl, fileName, mode = "view" }: Props) {
         height: "100%",
       };
 
-      const containerId = containerRef.current.id || `onlyoffice-${signed.docId}`;
+      const containerId = containerRef.current.id || `onlyoffice-${signedData.docId}`;
       containerRef.current.id = containerId;
       try {
         editorRef.current = new (window as any).DocsAPI.DocEditor(

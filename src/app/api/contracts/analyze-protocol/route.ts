@@ -49,6 +49,10 @@ function parseMode(value: string): ProtocolInputMode {
     : "client-points";
 }
 
+function asString(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
 async function extractText(buffer: Buffer, fileName: string): Promise<string> {
   const ext = fileName.split(".").pop()?.toLowerCase() ?? "";
 
@@ -230,7 +234,9 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "contract not found" }, { status: 404 });
     }
 
-    const templateDocId = extractDocumentId(contract.templateFileUrl || "") || contract.templateDocId;
+    const templateFileUrl = asString(contract.templateFileUrl);
+    const fallbackTemplateDocId = asString(contract.templateDocId);
+    const templateDocId = extractDocumentId(templateFileUrl) || fallbackTemplateDocId;
 
     let templateText = "";
     if (templateDocId) {
@@ -248,8 +254,10 @@ export async function POST(request: Request) {
       const rulesDocs = knowledge.filter((item) => item?.section === "rules" && item?.fileUrl);
       const lawsDocs = knowledge.filter((item) => item?.section === "laws" && item?.fileUrl);
 
-      const rulesDocId = rulesDocs.length > 0 ? extractDocumentId(rulesDocs[0].fileUrl || "") : null;
-      const lawsDocId = lawsDocs.length > 0 ? extractDocumentId(lawsDocs[0].fileUrl || "") : null;
+      const rulesDocId =
+        rulesDocs.length > 0 ? extractDocumentId(asString(rulesDocs[0].fileUrl)) : null;
+      const lawsDocId =
+        lawsDocs.length > 0 ? extractDocumentId(asString(lawsDocs[0].fileUrl)) : null;
 
       if (rulesDocId) {
         const doc = await getDocument(rulesDocId, scope);
@@ -303,7 +311,7 @@ export async function POST(request: Request) {
       : [];
 
     let existingProtocolText = "";
-    const protocolDocId = extractDocumentId(contract.protocolFileUrl || "");
+    const protocolDocId = extractDocumentId(asString(contract.protocolFileUrl));
 
     if (protocolDocId) {
       const protocolDoc = await getDocument(protocolDocId, scope);
@@ -337,6 +345,7 @@ export async function POST(request: Request) {
       lawsText,
       requestHistory,
       aiAdapter: async () => aiResult,
+      mockAiResult: null,
       now: new Date().toISOString(),
     });
 
