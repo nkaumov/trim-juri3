@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { usePublicConfig } from "@/lib/usePublicConfig";
 
 type OnlyOfficeMode = "view" | "edit";
 
@@ -28,8 +29,7 @@ function getDocId(fileUrl: string): { docId: string; kind: SignedPayload["kind"]
   return null;
 }
 
-function withBaseUrl(path: string): string {
-  const base = process.env.NEXT_PUBLIC_ONLYOFFICE_FILE_BASE_URL || "";
+function withBaseUrl(path: string, base: string): string {
   if (!base) return path;
   return `${base.replace(/\/$/, "")}${path}`;
 }
@@ -49,19 +49,21 @@ function getFileType(fileName?: string): { fileType: string; documentType: "word
 }
 
 export function OnlyOfficeViewer({ fileUrl, fileName, mode = "view" }: Props) {
-  const tenantId = process.env.NEXT_PUBLIC_PLATFORM_TENANT_ID ?? "local-tenant";
-  const agentId = process.env.NEXT_PUBLIC_PLATFORM_AGENT_ID ?? "jurist3-agent";
+  const { config: publicConfig } = usePublicConfig();
+  const tenantId = publicConfig?.platformTenantId ?? "local-tenant";
+  const agentId = publicConfig?.platformAgentId ?? "jurist3-agent";
   const containerRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<any>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [signed, setSigned] = useState<SignedPayload | null>(null);
   const { fileType, documentType } = useMemo(() => getFileType(fileName), [fileName]);
-  const onlyOfficeUrl = process.env.NEXT_PUBLIC_ONLYOFFICE_URL || "";
+  const onlyOfficeUrl = publicConfig?.onlyofficeUrl || "";
+  const onlyOfficeFileBaseUrl = publicConfig?.onlyofficeFileBaseUrl || "";
   const scriptSrc = onlyOfficeUrl
     ? `${onlyOfficeUrl.replace(/\/$/, "")}/web-apps/apps/api/documents/api.js`
     : "";
-  const docUrl = signed ? withBaseUrl(signed.url) : "";
+  const docUrl = signed ? withBaseUrl(signed.url, onlyOfficeFileBaseUrl) : "";
 
   const docMeta = useMemo(() => getDocId(fileUrl), [fileUrl]);
 
@@ -99,7 +101,7 @@ export function OnlyOfficeViewer({ fileUrl, fileName, mode = "view" }: Props) {
     if (!signed || !containerRef.current) return;
     const signedData = signed;
 
-    const onlyOfficeUrl = process.env.NEXT_PUBLIC_ONLYOFFICE_URL || "";
+    const onlyOfficeUrl = publicConfig?.onlyofficeUrl || "";
     if (!onlyOfficeUrl) {
       setLoadError("ONLYOFFICE url not configured.");
       setLoading(false);
@@ -134,6 +136,7 @@ export function OnlyOfficeViewer({ fileUrl, fileName, mode = "view" }: Props) {
               `/api/contracts/onlyoffice-callback?docId=${encodeURIComponent(signedData.docId)}` +
                 `&token=${encodeURIComponent(signedData.token)}&exp=${signedData.exp}` +
                 `&tenantId=${encodeURIComponent(tenantId)}&agentId=${encodeURIComponent(agentId)}`,
+              onlyOfficeFileBaseUrl,
             )
           : undefined;
 
@@ -142,7 +145,7 @@ export function OnlyOfficeViewer({ fileUrl, fileName, mode = "view" }: Props) {
           fileType,
           key: `${signedData.docId}-${signedData.exp}`,
           title: fileName ?? signedData.docId,
-          url: withBaseUrl(signedData.url),
+          url: withBaseUrl(signedData.url, onlyOfficeFileBaseUrl),
           permissions: {
             edit: mode === "edit",
             download: true,
@@ -226,7 +229,17 @@ export function OnlyOfficeViewer({ fileUrl, fileName, mode = "view" }: Props) {
         editorRef.current = null;
       }
     };
-  }, [signed, mode]);
+  }, [
+    agentId,
+    documentType,
+    fileName,
+    fileType,
+    onlyOfficeFileBaseUrl,
+    onlyOfficeUrl,
+    signed,
+    mode,
+    tenantId,
+  ]);
 
   return (
     <div className="onlyoffice-frame">

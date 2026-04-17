@@ -13,6 +13,7 @@ import { OnlyOfficeViewer } from "@/components/contracts/OnlyOfficeViewer";
 import { t } from "@/i18n";
 import type { Locale } from "@/i18n/types";
 import type { KnowledgeDocument } from "@/lib/knowledge/types";
+import { usePublicConfig } from "@/lib/usePublicConfig";
 
 const tabOptions = [
   { id: "template", labelKey: "workspace.contract.tab.template" },
@@ -31,11 +32,6 @@ const aiModeOptions = [
   { id: "commented-template" as ProtocolInputMode, labelKey: "workspace.contract.branch.commentedTemplate.title", descKey: "workspace.contract.branch.commentedTemplate.desc", inputKind: "file" as const },
   { id: "protocol-sync" as ProtocolInputMode, labelKey: "workspace.contract.branch.protocolSync.title", descKey: "workspace.contract.branch.protocolSync.desc", inputKind: "file" as const },
 ] as const;
-
-const scope = {
-  tenantId: process.env.NEXT_PUBLIC_PLATFORM_TENANT_ID ?? "local-tenant",
-  agentId: process.env.NEXT_PUBLIC_PLATFORM_AGENT_ID ?? "jurist3-agent",
-};
 
 function getAiSectionLabel(id: AiPanelSection): string {
   if (id === "request") return "Запрос";
@@ -68,6 +64,10 @@ function getModeLabelKey(mode: ProtocolInputMode): `workspace.${string}` {
 }
 
 export function ContractWorkspace() {
+  const { config: publicConfig } = usePublicConfig();
+  const tenantId = publicConfig?.platformTenantId ?? "local-tenant";
+  const agentId = publicConfig?.platformAgentId ?? "jurist3-agent";
+
   const params = useParams();
   const contractId = typeof params?.contractId === "string" ? params.contractId : "";
   const locale = getLocale();
@@ -109,7 +109,7 @@ export function ContractWorkspace() {
   const modeNeedsFile = currentMode.inputKind === "file";
 
   const loadData = useCallback(async () => {
-    const headers = { "x-tenant-id": scope.tenantId, "x-agent-id": scope.agentId };
+    const headers = { "x-tenant-id": tenantId, "x-agent-id": agentId };
     if (!contractId) return;
     setLoadError(null);
     try {
@@ -133,7 +133,7 @@ export function ContractWorkspace() {
     } catch {
       setLoadError(t(locale, "workspace.contract.error.load"));
     }
-  }, [contractId, locale]);
+  }, [agentId, contractId, locale, tenantId]);
 
   useEffect(() => { void loadData(); }, [loadData]);
   useEffect(() => { setProtocolRowsState(Array.isArray(contract?.protocolRows) ? contract.protocolRows : []); }, [contract?.protocolRows]);

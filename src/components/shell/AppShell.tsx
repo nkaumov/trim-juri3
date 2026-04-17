@@ -5,6 +5,7 @@ import Link from "next/link";
 import type { ContractDraft } from "@/lib/contracts/types";
 import type { ProfileSettings } from "@/lib/profile/types";
 import type { KnowledgeDocument, KnowledgeScope, KnowledgeSection } from "@/lib/knowledge/types";
+import { usePublicConfig } from "@/lib/usePublicConfig";
 
 type Section = "contracts" | "profile" | "knowledge" | "settings";
 
@@ -44,11 +45,6 @@ const knowledgeItems: Array<{
   },
 ];
 
-const knowledgeScope: KnowledgeScope = {
-  tenantId: process.env.NEXT_PUBLIC_PLATFORM_TENANT_ID ?? "local-tenant",
-  agentId: process.env.NEXT_PUBLIC_PLATFORM_AGENT_ID ?? "jurist3-agent",
-};
-
 function formatDate(value: string): string {
   return new Date(value).toLocaleString("ru-RU", {
     day: "2-digit",
@@ -70,6 +66,11 @@ function formatFileSize(bytes: number): string {
 }
 
 export function AppShell() {
+  const { config: publicConfig } = usePublicConfig();
+  const tenantId = publicConfig?.platformTenantId ?? "local-tenant";
+  const agentId = publicConfig?.platformAgentId ?? "jurist3-agent";
+  const knowledgeScope: KnowledgeScope = { tenantId, agentId };
+
   const [hydrated, setHydrated] = useState(false);
   const [activeSection, setActiveSection] = useState<Section>("contracts");
   const [openKnowledgeSection, setOpenKnowledgeSection] =
