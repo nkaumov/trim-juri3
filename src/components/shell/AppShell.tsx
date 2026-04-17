@@ -193,7 +193,21 @@ export function AppShell() {
       "x-tenant-id": knowledgeScope.tenantId,
       "x-agent-id": knowledgeScope.agentId,
     };
-    void fetch("/api/storage/clients", { method: "POST", headers, body: JSON.stringify({ items: clients }) });
+
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => {
+      void fetch("/api/storage/clients", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ items: clients }),
+        signal: controller.signal,
+      }).catch(() => null);
+    }, 400);
+
+    return () => {
+      controller.abort();
+      window.clearTimeout(timeoutId);
+    };
   }, [clients, hydrated, clientsLoaded]);
 
   useEffect(() => {
@@ -203,7 +217,21 @@ export function AppShell() {
       "x-tenant-id": knowledgeScope.tenantId,
       "x-agent-id": knowledgeScope.agentId,
     };
-    void fetch("/api/storage/contracts", { method: "POST", headers, body: JSON.stringify({ items: contracts }) });
+
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => {
+      void fetch("/api/storage/contracts", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ items: contracts }),
+        signal: controller.signal,
+      }).catch(() => null);
+    }, 400);
+
+    return () => {
+      controller.abort();
+      window.clearTimeout(timeoutId);
+    };
   }, [contracts, hydrated, contractsLoaded]);
 
   useEffect(() => {
@@ -213,7 +241,21 @@ export function AppShell() {
       "x-tenant-id": knowledgeScope.tenantId,
       "x-agent-id": knowledgeScope.agentId,
     };
-    void fetch("/api/storage/knowledge", { method: "POST", headers, body: JSON.stringify({ items: knowledgeDocs }) });
+
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => {
+      void fetch("/api/storage/knowledge", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ items: knowledgeDocs }),
+        signal: controller.signal,
+      }).catch(() => null);
+    }, 400);
+
+    return () => {
+      controller.abort();
+      window.clearTimeout(timeoutId);
+    };
   }, [knowledgeDocs, hydrated, knowledgeLoaded]);
 
   useEffect(() => {
@@ -223,7 +265,21 @@ export function AppShell() {
       "x-tenant-id": knowledgeScope.tenantId,
       "x-agent-id": knowledgeScope.agentId,
     };
-    void fetch("/api/storage/profile", { method: "POST", headers, body: JSON.stringify({ data: profileSettings }) });
+
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => {
+      void fetch("/api/storage/profile", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ data: profileSettings }),
+        signal: controller.signal,
+      }).catch(() => null);
+    }, 400);
+
+    return () => {
+      controller.abort();
+      window.clearTimeout(timeoutId);
+    };
   }, [profileSettings, hydrated, profileLoaded]);
 
   useEffect(() => {
