@@ -8,6 +8,9 @@ import type {
 export type ProtocolAiPayload = {
   mode: ProtocolInputMode;
   templateText: string;
+  existingComments?: ProtocolComment[];
+  existingSummary?: string;
+  existingRecommendation?: string;
   existingRows: ProtocolRow[];
   existingProtocolText: string;
   newInputText: string;
@@ -54,4 +57,3 @@ export function normalizeRow(row: Partial<ProtocolRow>): ProtocolRow;
 export function normalizeComment(item: Partial<ProtocolComment>, fallbackIndex: number): ProtocolComment;
 export function normalizeSpace(value: string): string;
 export function dedupeRows(rows: ProtocolRow[]): ProtocolRow[];
-export function mergeRows(existingRows: ProtocolRow[], incomingRows: ProtocolRow[]): ProtocolRow[];

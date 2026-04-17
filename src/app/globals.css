@@ -839,6 +839,8 @@ a {
 
 .draft-card__actions {
   margin-top: 4px;
+  gap: 10px;
+  display: flex;
 }
 
 .profile-card {
@@ -1396,6 +1398,59 @@ a {
   border-radius: 12px;
   overflow: hidden;
   display: grid;
+}
+
+.protocol-table__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-soft);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.protocol-table__toolbar-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.protocol-table__titles {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-soft);
+  background: rgba(255, 255, 255, 0.01);
+}
+
+.protocol-title-field {
+  display: grid;
+  gap: 6px;
+}
+
+.protocol-title-input {
+  width: 100%;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text-main);
+  padding: 7px 10px;
+  min-height: 34px;
+}
+
+.protocol-title-input:focus {
+  outline: none;
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+@media (max-width: 900px) {
+  .protocol-table__titles {
+    grid-template-columns: 1fr;
+  }
 }
 
 .protocol-table__head,

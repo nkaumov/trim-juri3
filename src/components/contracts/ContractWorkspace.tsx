@@ -3,7 +3,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import type { ContractDraft, ProtocolInputMode, ProtocolRow } from "@/lib/contracts/types";
+import type {
+  ContractDraft,
+  ProtocolColumnTitles,
+  ProtocolInputMode,
+  ProtocolRow,
+} from "@/lib/contracts/types";
 import { OnlyOfficeViewer } from "@/components/contracts/OnlyOfficeViewer";
 import { t } from "@/i18n";
 import type { Locale } from "@/i18n/types";
@@ -40,6 +45,14 @@ function getAiSectionLabel(id: AiPanelSection): string {
 
 function getLocale(): Locale {
   return "ru";
+}
+
+function getDefaultProtocolColumnTitles(locale: Locale): ProtocolColumnTitles {
+  return {
+    client: t(locale, "workspace.contract.protocol.table.client"),
+    our: t(locale, "workspace.contract.protocol.table.our"),
+    agreed: t(locale, "workspace.contract.protocol.table.agreed"),
+  };
 }
 
 function getModeLabelKey(mode: ProtocolInputMode): `workspace.${string}` {
@@ -83,6 +96,12 @@ export function ContractWorkspace() {
   const [editValue, setEditValue] = useState("");
   const [protocolEditError, setProtocolEditError] = useState<string | null>(null);
   const [protocolEditSaving, setProtocolEditSaving] = useState(false);
+  const [columnTitlesEditing, setColumnTitlesEditing] = useState(false);
+  const [columnTitlesSaving, setColumnTitlesSaving] = useState(false);
+  const [columnTitlesError, setColumnTitlesError] = useState<string | null>(null);
+  const [columnTitlesDraft, setColumnTitlesDraft] = useState<ProtocolColumnTitles>(
+    getDefaultProtocolColumnTitles(locale),
+  );
 
   const isFinalTab = activeTab === "final";
   const currentMode = aiModeOptions.find((item) => item.id === inputMode) ?? aiModeOptions[0];
@@ -118,6 +137,19 @@ export function ContractWorkspace() {
 
   useEffect(() => { void loadData(); }, [loadData]);
   useEffect(() => { setProtocolRowsState(Array.isArray(contract?.protocolRows) ? contract.protocolRows : []); }, [contract?.protocolRows]);
+  useEffect(() => {
+    const defaults = getDefaultProtocolColumnTitles(locale);
+    const fromContract = contract?.protocolColumnTitles;
+    if (!fromContract) {
+      setColumnTitlesDraft(defaults);
+      return;
+    }
+    setColumnTitlesDraft({
+      client: String(fromContract.client || defaults.client),
+      our: String(fromContract.our || defaults.our),
+      agreed: String(fromContract.agreed || defaults.agreed),
+    });
+  }, [contract?.protocolColumnTitles, locale]);
   useEffect(() => {
     setAiError(null); setAiNotice(null);
     if (modeNeedsText) setPendingFile(null);
@@ -177,6 +209,26 @@ export function ContractWorkspace() {
       setEditCell(null); setEditValue("");
     } catch { setProtocolEditError(t(locale, "workspace.contract.protocol.edit.error")); }
     finally { setProtocolEditSaving(false); }
+  };
+
+  const saveColumnTitles = async () => {
+    if (!contractId) return;
+    setColumnTitlesSaving(true);
+    setColumnTitlesError(null);
+    try {
+      const response = await fetch("/api/contracts/update-protocol-columns", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contractId, titles: columnTitlesDraft }),
+      });
+      if (!response.ok) throw new Error();
+      await loadData();
+      setColumnTitlesEditing(false);
+    } catch {
+      setColumnTitlesError("Не удалось сохранить заголовки колонок.");
+    } finally {
+      setColumnTitlesSaving(false);
+    }
   };
 
   const isFinalized = contract?.status === "finalized";
@@ -268,7 +320,107 @@ export function ContractWorkspace() {
                   <>
                     <div className="protocol-table-wrap"><h4>{t(locale, "workspace.contract.protocol.table.title")}</h4>
                       <div className="protocol-table">
-                        <div className="protocol-table__head"><span>{t(locale, "workspace.contract.protocol.table.clause")}</span><span>{t(locale, "workspace.contract.protocol.table.client")}</span><span>{t(locale, "workspace.contract.protocol.table.our")}</span><span>{t(locale, "workspace.contract.protocol.table.agreed")}</span></div>
+                        <div className="protocol-table__toolbar">
+                          <div className="protocol-table__toolbar-title">
+                            <span className="muted-text">Шапка таблицы</span>
+                          </div>
+                          <div className="protocol-table__toolbar-actions">
+                            {!columnTitlesEditing ? (
+                              <button
+                                className="ghost-btn ghost-btn--inline"
+                                type="button"
+                                onClick={() => {
+                                  setColumnTitlesEditing(true);
+                                  setColumnTitlesError(null);
+                                }}
+                              >
+                                Редактировать
+                              </button>
+                            ) : (
+                              <>
+                                <button
+                                  className="primary"
+                                  type="button"
+                                  onClick={saveColumnTitles}
+                                  disabled={columnTitlesSaving}
+                                >
+                                  Сохранить
+                                </button>
+                                <button
+                                  className="ghost-btn ghost-btn--inline"
+                                  type="button"
+                                  onClick={() => {
+                                    setColumnTitlesEditing(false);
+                                    setColumnTitlesError(null);
+                                    const defaults = getDefaultProtocolColumnTitles(locale);
+                                    const fromContract = contract?.protocolColumnTitles;
+                                    setColumnTitlesDraft({
+                                      client: String(fromContract?.client || defaults.client),
+                                      our: String(fromContract?.our || defaults.our),
+                                      agreed: String(fromContract?.agreed || defaults.agreed),
+                                    });
+                                  }}
+                                >
+                                  Отмена
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+
+                        {columnTitlesEditing && (
+                          <div className="protocol-table__titles">
+                            <label className="protocol-title-field">
+                              <span className="muted-text">Колонка 1</span>
+                              <input
+                                className="protocol-title-input"
+                                value={columnTitlesDraft.client}
+                                onChange={(e) =>
+                                  setColumnTitlesDraft((prev) => ({
+                                    ...prev,
+                                    client: e.target.value,
+                                  }))
+                                }
+                              />
+                            </label>
+                            <label className="protocol-title-field">
+                              <span className="muted-text">Колонка 2</span>
+                              <input
+                                className="protocol-title-input"
+                                value={columnTitlesDraft.our}
+                                onChange={(e) =>
+                                  setColumnTitlesDraft((prev) => ({
+                                    ...prev,
+                                    our: e.target.value,
+                                  }))
+                                }
+                              />
+                            </label>
+                            <label className="protocol-title-field">
+                              <span className="muted-text">Колонка 3</span>
+                              <input
+                                className="protocol-title-input"
+                                value={columnTitlesDraft.agreed}
+                                onChange={(e) =>
+                                  setColumnTitlesDraft((prev) => ({
+                                    ...prev,
+                                    agreed: e.target.value,
+                                  }))
+                                }
+                              />
+                            </label>
+                            {columnTitlesError && (
+                              <p className="form-error">{columnTitlesError}</p>
+                            )}
+                          </div>
+                        )}
+
+                        <div className="protocol-table__head">
+                          <span>{t(locale, "workspace.contract.protocol.table.clause")}</span>
+                          <span>{columnTitlesDraft.client}</span>
+                          <span>{columnTitlesDraft.our}</span>
+                          <span>{columnTitlesDraft.agreed}</span>
+                        </div>
                         {protocolRowsState.map((row, index) => {
                           const isClauseEdit = editCell?.row === index && editCell.field === "clause";
                           const isClientEdit = editCell?.row === index && editCell.field === "clientText";

@@ -12,9 +12,16 @@ type ProtocolRow = {
   agreedText?: string;
 };
 
+type ProtocolColumnTitles = {
+  client: string;
+  our: string;
+  agreed: string;
+};
+
 type ContractStoreItem = {
   id: string;
   protocolRows?: ProtocolRow[];
+  protocolColumnTitles?: ProtocolColumnTitles;
 };
 
 function isContractStoreItem(value: unknown): value is ContractStoreItem {
@@ -43,13 +50,17 @@ function formatCell(text: string): string {
     .join("");
 }
 
-function buildTable(rows: ProtocolRow[]) {
+function buildTable(rows: ProtocolRow[], titles?: ProtocolColumnTitles) {
+  const clientTitle = titles?.client?.trim() || "\u0420\u0435\u0434\u0430\u043a\u0446\u0438\u044f ____________";
+  const ourTitle = titles?.our?.trim() || "\u0420\u0435\u0434\u0430\u043a\u0446\u0438\u044f ____________";
+  const agreedTitle =
+    titles?.agreed?.trim() || "\u0421\u043e\u0433\u043b\u0430\u0441\u043e\u0432\u0430\u043d\u043d\u0430\u044f \u0440\u0435\u0434\u0430\u043a\u0446\u0438\u044f";
   const header = [
     "\u2116 \u043f/\u043f",
     "\u041f\u0443\u043d\u043a\u0442 \u0434\u043e\u0433\u043e\u0432\u043e\u0440\u0430",
-    "\u0420\u0435\u0434\u0430\u043a\u0446\u0438\u044f ____________",
-    "\u0420\u0435\u0434\u0430\u043a\u0446\u0438\u044f ____________",
-    "\u0421\u043e\u0433\u043b\u0430\u0441\u043e\u0432\u0430\u043d\u043d\u0430\u044f \u0440\u0435\u0434\u0430\u043a\u0446\u0438\u044f",
+    clientTitle,
+    ourTitle,
+    agreedTitle,
   ];
   const headerRow = `<w:tr>${header
     .map(
@@ -119,8 +130,8 @@ function buildSignatureBlock(): string {
   `;
 }
 
-function buildDocx(rows: ProtocolRow[]) {
-  const tableXml = buildTable(rows);
+function buildDocx(rows: ProtocolRow[], titles?: ProtocolColumnTitles) {
+  const tableXml = buildTable(rows, titles);
   const signatureXml = buildSignatureBlock();
   const documentXml = `<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>
 <w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">
@@ -172,9 +183,11 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "contract not found" }, { status: 404 });
     }
     const rows = Array.isArray(contract.protocolRows) ? contract.protocolRows : [];
-    const buffer = buildDocx(rows);
+    const titles = contract.protocolColumnTitles;
+    const buffer = buildDocx(rows, titles);
 
-    return new NextResponse(buffer, {
+    // NextResponse typing doesn't accept Node Buffer, but runtime does.
+    return new NextResponse(buffer as unknown as BodyInit, {
       status: 200,
       headers: {
         "Content-Type":

@@ -14,11 +14,18 @@ type ProtocolRow = {
   agreedText?: string;
 };
 
+type ProtocolColumnTitles = {
+  client: string;
+  our: string;
+  agreed: string;
+};
+
 type ContractStoreItem = {
   id: string;
   templateFileUrl?: string;
   templateDocId?: string;
   protocolRows?: ProtocolRow[];
+  protocolColumnTitles?: ProtocolColumnTitles;
   [key: string]: unknown;
 };
 
@@ -59,13 +66,17 @@ function buildParagraphs(text: string): string {
     .join("");
 }
 
-function buildTable(rows: ProtocolRow[]) {
+function buildTable(rows: ProtocolRow[], titles?: ProtocolColumnTitles) {
+  const clientTitle = titles?.client?.trim() || "\u0420\u0435\u0434\u0430\u043a\u0446\u0438\u044f ____________";
+  const ourTitle = titles?.our?.trim() || "\u0420\u0435\u0434\u0430\u043a\u0446\u0438\u044f ____________";
+  const agreedTitle =
+    titles?.agreed?.trim() || "\u0421\u043e\u0433\u043b\u0430\u0441\u043e\u0432\u0430\u043d\u043d\u0430\u044f \u0440\u0435\u0434\u0430\u043a\u0446\u0438\u044f";
   const header = [
     "\u2116 \u043f/\u043f",
     "\u041f\u0443\u043d\u043a\u0442 \u0434\u043e\u0433\u043e\u0432\u043e\u0440\u0430",
-    "\u0420\u0435\u0434\u0430\u043a\u0446\u0438\u044f ____________",
-    "\u0420\u0435\u0434\u0430\u043a\u0446\u0438\u044f ____________",
-    "\u0421\u043e\u0433\u043b\u0430\u0441\u043e\u0432\u0430\u043d\u043d\u0430\u044f \u0440\u0435\u0434\u0430\u043a\u0446\u0438\u044f",
+    clientTitle,
+    ourTitle,
+    agreedTitle,
   ];
   const headerRow = `<w:tr>${header
     .map(
@@ -135,9 +146,13 @@ function buildSignatureBlock(): string {
   `;
 }
 
-function buildFinalDocx(templateText: string, rows: ProtocolRow[]) {
+function buildFinalDocx(
+  templateText: string,
+  rows: ProtocolRow[],
+  titles?: ProtocolColumnTitles,
+) {
   const templateXml = buildParagraphs(templateText);
-  const tableXml = buildTable(rows);
+  const tableXml = buildTable(rows, titles);
   const signatureXml = buildSignatureBlock();
   const documentXml = `<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>
 <w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">
@@ -171,6 +186,49 @@ function buildFinalDocx(templateText: string, rows: ProtocolRow[]) {
   zip.folder("_rels")?.file(".rels", rels);
   zip.folder("word")?.file("document.xml", documentXml);
   zip.folder("word")?.folder("_rels")?.file("document.xml.rels", "");
+  return zip.generate({ type: "nodebuffer" });
+}
+
+function buildProtocolAppendXml(rows: ProtocolRow[], titles?: ProtocolColumnTitles): string {
+  const tableXml = buildTable(rows, titles);
+  const signatureXml = buildSignatureBlock();
+  // Add a page break before protocol so it doesn't merge into the template tail.
+  return `
+    <w:p><w:r><w:br w:type="page"/></w:r></w:p>
+    <w:p><w:r><w:t>\u041f\u0420\u041e\u0422\u041e\u041a\u041e\u041b \u0420\u0410\u0417\u041d\u041e\u0413\u041b\u0410\u0421\u0418\u0419</w:t></w:r></w:p>
+    ${tableXml}
+    ${signatureXml}
+  `;
+}
+
+function injectIntoDocxBody(documentXml: string, insertXml: string): string {
+  const xml = String(documentXml || "");
+  if (!xml) return xml;
+
+  // Keep existing section properties at the very end of the body.
+  const sectPrIndex = xml.lastIndexOf("<w:sectPr");
+  if (sectPrIndex >= 0) {
+    return `${xml.slice(0, sectPrIndex)}${insertXml}${xml.slice(sectPrIndex)}`;
+  }
+
+  const bodyCloseIndex = xml.lastIndexOf("</w:body>");
+  if (bodyCloseIndex >= 0) {
+    return `${xml.slice(0, bodyCloseIndex)}${insertXml}${xml.slice(bodyCloseIndex)}`;
+  }
+
+  return xml;
+}
+
+function buildFinalDocxFromTemplateDocx(
+  templateBuffer: Buffer,
+  rows: ProtocolRow[],
+  titles?: ProtocolColumnTitles,
+): Buffer {
+  const zip = new PizZip(templateBuffer);
+  const documentXml = zip.file("word/document.xml")?.asText() || "";
+  const insertXml = buildProtocolAppendXml(rows, titles);
+  const nextDocumentXml = injectIntoDocxBody(documentXml, insertXml);
+  zip.file("word/document.xml", nextDocumentXml);
   return zip.generate({ type: "nodebuffer" });
 }
 
@@ -217,15 +275,26 @@ export async function POST(request: Request) {
 
     const templateDocId = extractDocumentId(contract.templateFileUrl || "") || contract.templateDocId;
     let templateText = "";
+    let templateDocBuffer: Buffer | null = null;
+    let templateDocFileName = "";
     if (templateDocId) {
       const templateDoc = await getDocument(templateDocId, scope);
       if (templateDoc) {
+        templateDocBuffer = templateDoc.buffer;
+        templateDocFileName = templateDoc.fileName;
         templateText = await extractText(templateDoc.buffer, templateDoc.fileName);
       }
     }
 
     const rows = Array.isArray(contract.protocolRows) ? contract.protocolRows : [];
-    const buffer = buildFinalDocx(templateText, rows);
+    const titles = contract.protocolColumnTitles;
+    let buffer: Buffer;
+    if (templateDocBuffer && templateDocFileName.toLowerCase().endsWith(".docx")) {
+      buffer = buildFinalDocxFromTemplateDocx(templateDocBuffer, rows, titles);
+    } else {
+      // Fallback for pdf/txt/unknown: formatting cannot be preserved.
+      buffer = buildFinalDocx(templateText, rows, titles);
+    }
     const fileName = `final-contract-${contractId}.docx`;
 
     const docId = await saveDocument({

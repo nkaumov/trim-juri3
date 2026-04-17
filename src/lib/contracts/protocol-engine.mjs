@@ -160,10 +160,10 @@ async function runProtocolEngine({
 
   if (!trimmedInput) {
     return {
-      rows: existingRows || [],
-      comments: existingComments || [],
-      summary: "",
-      recommendation: "",
+      rows: dedupeRows(existingRows || []),
+      comments: normalizeComments(existingComments || []),
+      summary: normalizeSpace(""),
+      recommendation: normalizeSpace(""),
       requestHistory: requestHistory || [],
       usedAi: false,
     };
@@ -175,7 +175,10 @@ async function runProtocolEngine({
       ? await aiAdapter({
           mode: safeMode,
           templateText: templateText || "",
-          existingRows: existingRows || [],
+          existingRows: dedupeRows(existingRows || []),
+          existingComments: normalizeComments(existingComments || []),
+          existingSummary: "",
+          existingRecommendation: "",
           existingProtocolText: existingProtocolText || "",
           newInputText: trimmedInput,
           rulesText: rulesText || "",
@@ -186,36 +189,51 @@ async function runProtocolEngine({
 
   if (!aiResult) {
     return {
-      rows: existingRows || [],
-      comments: existingComments || [],
-      summary: "",
-      recommendation: "",
+      rows: dedupeRows(existingRows || []),
+      comments: normalizeComments(existingComments || []),
+      summary: normalizeSpace(""),
+      recommendation: normalizeSpace(""),
       requestHistory: requestHistory || [],
       usedAi: false,
     };
   }
 
-  const incomingRows = Array.isArray(aiResult.rows) ? aiResult.rows : [];
-  const mergedRows = mergeRows(existingRows || [], incomingRows);
-  const nextRows = mergedRows.length ? mergedRows : existingRows || [];
+  // Full rebuild: AI must return canonical rows array (may be empty to mean "no disagreements").
+  // If AI response is malformed (no rows array), do not mutate existing state.
+  if (!Array.isArray(aiResult.rows)) {
+    return {
+      rows: dedupeRows(existingRows || []),
+      comments: normalizeComments(existingComments || []),
+      summary: normalizeSpace(""),
+      recommendation: normalizeSpace(""),
+      requestHistory: requestHistory || [],
+      usedAi: false,
+      raw: aiResult,
+    };
+  }
 
-  const nextComments = normalizeComments(aiResult.comments);
+  const nextRows = dedupeRows(aiResult.rows);
+  const nextComments = Array.isArray(aiResult.comments) ? normalizeComments(aiResult.comments) : [];
+  const nextSummary = normalizeSpace(aiResult.summary || "");
+  const nextRecommendation = normalizeSpace(aiResult.recommendation || "");
+
   const logEntry = {
     id: aiResult.logId || `${Date.now()}`,
     mode: safeMode,
     text: trimmedInput,
     createdAt: now || new Date().toISOString(),
-    summary: normalizeSpace(aiResult.summary || ""),
+    summary: nextSummary,
   };
 
   return {
     rows: nextRows,
     comments: nextComments,
-    summary: normalizeSpace(aiResult.summary || ""),
-    recommendation: normalizeSpace(aiResult.recommendation || ""),
+    summary: nextSummary,
+    recommendation: nextRecommendation,
     requestHistory: appendRequest(requestHistory || [], logEntry),
     usedAi: true,
     logEntry,
+    raw: aiResult,
   };
 }
 
@@ -226,5 +244,4 @@ export {
   normalizeComment,
   normalizeSpace,
   dedupeRows,
-  mergeRows,
 };

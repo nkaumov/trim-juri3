@@ -49,6 +49,80 @@ function parseMode(value: string): ProtocolInputMode {
     : "client-points";
 }
 
+function asString(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function extractClauseIds(text: string, limit = 40): string[] {
+  const inputText = String(text || "");
+  const matches = inputText.match(/\b\d+(?:\.\d+){1,}\b/g) || [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of matches) {
+    const clause = raw.replace(/\.+$/, "");
+    if (!clause) continue;
+    if (seen.has(clause)) continue;
+    seen.add(clause);
+    out.push(clause);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+function buildTemplateClauseSnippets(
+  templateText: string,
+  clauses: string[],
+  maxSnippetLen = 1800,
+): Record<string, string> {
+  const template = String(templateText || "");
+  if (!template) return {};
+  if (!Array.isArray(clauses) || clauses.length === 0) return {};
+
+  const markerRegex = /\b(\d+(?:\.\d+){1,})\b/g;
+  const markers: Array<{ clause: string; index: number }> = [];
+  for (const match of template.matchAll(markerRegex)) {
+    const clause = String(match[1] || "").replace(/\.+$/, "");
+    const index = typeof match.index === "number" ? match.index : -1;
+    if (clause && index >= 0) markers.push({ clause, index });
+  }
+
+  const byClause = new Map<string, Array<{ clause: string; index: number }>>();
+  for (const m of markers) {
+    const list = byClause.get(m.clause) || [];
+    list.push(m);
+    byClause.set(m.clause, list);
+  }
+
+  const result: Record<string, string> = {};
+  for (const clause of clauses) {
+    let start = -1;
+    const hits = byClause.get(clause);
+    if (hits && hits.length > 0) {
+      start = hits[0].index;
+    } else {
+      const re = new RegExp(`\\b${escapeRegExp(clause)}\\b(?:\\s|\\.|\\)|:)`, "m");
+      const m = re.exec(template);
+      if (m && typeof m.index === "number") start = m.index;
+    }
+    if (start < 0) continue;
+
+    let end = Math.min(template.length, start + maxSnippetLen);
+    for (const m of markers) {
+      if (m.index > start) {
+        end = Math.min(m.index, start + maxSnippetLen);
+        break;
+      }
+    }
+    const snippet = template.slice(start, end).trim();
+    if (snippet) result[clause] = snippet;
+  }
+  return result;
+}
+
 async function extractText(buffer: Buffer, fileName: string): Promise<string> {
   const ext = fileName.split(".").pop()?.toLowerCase() ?? "";
 
@@ -138,7 +212,14 @@ async function callAi(input: {
   system: string;
   mode: ProtocolInputMode;
   templateText: string;
+  templateClauses: string[];
+  templateClauseSnippets: Record<string, string>;
+  protocolColumnTitles?: { client: string; our: string; agreed: string } | null;
+  currentDocumentText: string;
   existingRows: ProtocolRow[];
+  existingComments: ProtocolComment[];
+  existingSummary: string;
+  existingRecommendation: string;
   existingProtocolText: string;
   newInputText: string;
   rulesText: string;
@@ -159,15 +240,30 @@ async function callAi(input: {
     process.env.AI_API_BASE_URL || process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
   const model = process.env.AI_MODEL || process.env.OPENAI_MODEL || "gpt-4.1-mini";
 
+  function packLongText(value: string, limit: number): string {
+    const text = String(value || "");
+    if (text.length <= limit) return text;
+    const head = text.slice(0, Math.floor(limit / 2));
+    const tail = text.slice(-Math.ceil(limit / 2));
+    return `${head}\n\n[...trimmed...]\n\n${tail}`;
+  }
+
   const userPayload = {
     mode: input.mode,
-    template: input.templateText.slice(0, 12000),
+    templateText: packLongText(input.templateText, 40000),
+    templateClauses: Array.isArray(input.templateClauses) ? input.templateClauses.slice(0, 250) : [],
+    templateClauseSnippets: input.templateClauseSnippets || {},
+    protocolColumnTitles: input.protocolColumnTitles || null,
+    currentDocumentText: packLongText(input.currentDocumentText, 20000),
     existingRows: input.existingRows,
-    existingProtocolText: input.existingProtocolText.slice(0, 12000),
-    newInputText: input.newInputText.slice(0, 12000),
-    rulesText: input.rulesText.slice(0, 12000),
-    lawsText: input.lawsText.slice(0, 12000),
-    requestHistory: input.requestHistory.slice(-10),
+    existingComments: input.existingComments,
+    existingSummary: input.existingSummary,
+    existingRecommendation: input.existingRecommendation,
+    existingProtocolText: packLongText(input.existingProtocolText, 12000),
+    newInputText: packLongText(input.newInputText, 12000),
+    rulesText: packLongText(input.rulesText, 12000),
+    lawsText: packLongText(input.lawsText, 12000),
+    requestHistory: input.requestHistory.slice(-20),
   };
 
   const response = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
@@ -230,7 +326,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "contract not found" }, { status: 404 });
     }
 
-    const templateDocId = extractDocumentId(contract.templateFileUrl || "") || contract.templateDocId;
+    const templateDocId =
+      extractDocumentId(asString(contract.templateFileUrl)) || asString(contract.templateDocId);
 
     let templateText = "";
     if (templateDocId) {
@@ -248,8 +345,10 @@ export async function POST(request: Request) {
       const rulesDocs = knowledge.filter((item) => item?.section === "rules" && item?.fileUrl);
       const lawsDocs = knowledge.filter((item) => item?.section === "laws" && item?.fileUrl);
 
-      const rulesDocId = rulesDocs.length > 0 ? extractDocumentId(rulesDocs[0].fileUrl || "") : null;
-      const lawsDocId = lawsDocs.length > 0 ? extractDocumentId(lawsDocs[0].fileUrl || "") : null;
+      const rulesDocId =
+        rulesDocs.length > 0 ? extractDocumentId(asString(rulesDocs[0].fileUrl)) : null;
+      const lawsDocId =
+        lawsDocs.length > 0 ? extractDocumentId(asString(lawsDocs[0].fileUrl)) : null;
 
       if (rulesDocId) {
         const doc = await getDocument(rulesDocId, scope);
@@ -303,7 +402,7 @@ export async function POST(request: Request) {
       : [];
 
     let existingProtocolText = "";
-    const protocolDocId = extractDocumentId(contract.protocolFileUrl || "");
+    const protocolDocId = extractDocumentId(asString(contract.protocolFileUrl));
 
     if (protocolDocId) {
       const protocolDoc = await getDocument(protocolDocId, scope);
@@ -314,11 +413,34 @@ export async function POST(request: Request) {
 
     const systemPrompt = await readPrompt();
 
+    const iterations = Array.isArray((contract as any).iterations)
+      ? ((contract as any).iterations as Array<{ content?: unknown }>)
+      : [];
+    const currentDocumentText =
+      iterations.length > 0 ? asString(iterations[iterations.length - 1]?.content) : "";
+
+    const clauseIds = extractClauseIds(
+      [
+        newInputText,
+        ...existingRows.map((row) => row?.clause || ""),
+        ...existingComments.map((comment) => comment?.clause || ""),
+      ].join("\n"),
+    );
+    const templateClauses = extractClauseIds(templateText, 250);
+    const templateClauseSnippets = buildTemplateClauseSnippets(templateText, clauseIds);
+
     const aiResult = await callAi({
       system: systemPrompt,
       mode,
       templateText,
+      templateClauses,
+      templateClauseSnippets,
+      protocolColumnTitles: (contract as any).protocolColumnTitles || null,
+      currentDocumentText,
       existingRows,
+      existingComments,
+      existingSummary: normalizeSpace(asString((contract as any).protocolSummary)),
+      existingRecommendation: normalizeSpace(asString((contract as any).protocolRecommendation)),
       existingProtocolText,
       newInputText,
       rulesText,
@@ -337,12 +459,38 @@ export async function POST(request: Request) {
       lawsText,
       requestHistory,
       aiAdapter: async () => aiResult,
+      mockAiResult: null,
       now: new Date().toISOString(),
     });
 
     if (!engineResult.usedAi) {
       return NextResponse.json({ error: "ai_failed" }, { status: 500 });
     }
+
+    // Enforce two invariants server-side:
+    // 1) comments must refer only to current rows
+    // 2) comments.was should quote the template clause verbatim when possible
+    const rowClauses = new Set(
+      (engineResult.rows || [])
+        .map((row) => normalizeSpace(String((row as any)?.clause || "")))
+        .filter(Boolean),
+    );
+
+    const normalizedComments = (engineResult.comments || [])
+      .filter((comment) => {
+        const clause = normalizeSpace(String((comment as any)?.clause || ""));
+        if (!clause) return true;
+        return rowClauses.has(clause);
+      })
+      .map((comment) => {
+        const clause = normalizeSpace(String((comment as any)?.clause || ""));
+        const templateWas = clause ? templateClauseSnippets[clause] : "";
+        if (!templateWas) return comment;
+        return {
+          ...comment,
+          was: normalizeSpace(templateWas),
+        };
+      });
 
     const logEntry = engineResult.logEntry as ProtocolRequestLog;
 
@@ -352,7 +500,7 @@ export async function POST(request: Request) {
       return {
         ...item,
         protocolRows: engineResult.rows,
-        protocolComments: engineResult.comments,
+        protocolComments: normalizedComments,
         protocolSummary: engineResult.summary,
         protocolRecommendation: engineResult.recommendation,
         protocolUpdatedAt: logEntry.createdAt,
@@ -365,7 +513,7 @@ export async function POST(request: Request) {
     return NextResponse.json({
       ok: true,
       rows: engineResult.rows,
-      comments: engineResult.comments,
+      comments: normalizedComments,
       summary: engineResult.summary,
       recommendation: engineResult.recommendation,
       logEntry,

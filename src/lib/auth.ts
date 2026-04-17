@@ -59,7 +59,7 @@ export async function loginWithPassword(email: string, password: string): Promis
 export async function bootstrapAdmin(email: string, password: string): Promise<AuthUser> {
   const db = await ensureDb();
   const result = await db.query("SELECT id, email FROM users WHERE email = $1", [email]);
-  if (result.rowCount > 0) {
+  if ((result.rowCount ?? 0) > 0) {
     return result.rows[0] as AuthUser;
   }
   const hash = await bcrypt.hash(password, 10);

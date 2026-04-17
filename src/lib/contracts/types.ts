@@ -54,6 +54,12 @@ export type ProtocolRow = {
   agreedText?: string;
 };
 
+export type ProtocolColumnTitles = {
+  client: string;
+  our: string;
+  agreed: string;
+};
+
 export type ProtocolComment = {
   id: string;
   clause: string;
@@ -91,6 +97,7 @@ export type ContractDraft = {
   protocolSummary?: string;
   protocolRecommendation?: string;
   protocolRequests?: ProtocolRequestLog[];
+  protocolColumnTitles?: ProtocolColumnTitles;
   createdAt: string;
   status: "draft" | "archived" | "finalized";
   iterations: ContractIteration[];
