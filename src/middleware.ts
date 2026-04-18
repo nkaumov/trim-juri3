@@ -37,26 +37,10 @@ export function middleware(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  const port = process.env.PORT || "3000";
-  const internalUrl = new URL(`http://127.0.0.1:${port}/api/auth/me`);
-  return fetch(internalUrl.toString(), {
-    headers: {
-      cookie: request.headers.get("cookie") || "",
-    },
-  })
-    .then((res) => {
-      if (res.status === 200) {
-        return NextResponse.next();
-      }
-      const redirectUrl = request.nextUrl.clone();
-      redirectUrl.pathname = "/login";
-      return NextResponse.redirect(redirectUrl);
-    })
-    .catch(() => {
-      const redirectUrl = request.nextUrl.clone();
-      redirectUrl.pathname = "/login";
-      return NextResponse.redirect(redirectUrl);
-    });
+  // Middleware runs in the Edge runtime where setting a Cookie header on a subrequest
+  // can be restricted. For this app, existence of the session cookie is enough here;
+  // API routes still validate sessions server-side.
+  return NextResponse.next();
 }
 
 export const config = {
