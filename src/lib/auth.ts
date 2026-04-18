@@ -84,12 +84,16 @@ export async function createSession(userId: string): Promise<string> {
   return sessionId;
 }
 
-export async function setSessionCookie(sessionId: string) {
+export async function setSessionCookie(
+  sessionId: string,
+  options?: { secure?: boolean },
+) {
   const store = await cookies();
   store.set(SESSION_COOKIE, sessionId, {
     httpOnly: true,
     sameSite: "lax",
     path: "/",
+    secure: options?.secure ?? false,
   });
 }
 
