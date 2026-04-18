@@ -8,6 +8,7 @@ const PUBLIC_PATHS = [
   "/api/auth/me",
   "/api/health",
   "/api/public-config",
+  "/api/debug/session",
 ];
 
 export function middleware(request: NextRequest) {
