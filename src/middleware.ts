@@ -36,20 +36,26 @@ export function middleware(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  const url = request.nextUrl.clone();
-  url.pathname = "/api/auth/me";
-  return fetch(url.toString(), {
+  const port = process.env.PORT || "3000";
+  const internalUrl = new URL(`http://127.0.0.1:${port}/api/auth/me`);
+  return fetch(internalUrl.toString(), {
     headers: {
       cookie: request.headers.get("cookie") || "",
     },
-  }).then((res) => {
-    if (res.status === 200) {
-      return NextResponse.next();
-    }
-    const redirectUrl = request.nextUrl.clone();
-    redirectUrl.pathname = "/login";
-    return NextResponse.redirect(redirectUrl);
-  });
+  })
+    .then((res) => {
+      if (res.status === 200) {
+        return NextResponse.next();
+      }
+      const redirectUrl = request.nextUrl.clone();
+      redirectUrl.pathname = "/login";
+      return NextResponse.redirect(redirectUrl);
+    })
+    .catch(() => {
+      const redirectUrl = request.nextUrl.clone();
+      redirectUrl.pathname = "/login";
+      return NextResponse.redirect(redirectUrl);
+    });
 }
 
 export const config = {
