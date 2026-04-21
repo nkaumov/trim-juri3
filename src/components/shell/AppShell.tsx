@@ -147,6 +147,11 @@ export function AppShell() {
       "x-agent-id": knowledgeScope.agentId,
     };
     void (async () => {
+      const meRes = await fetch("/api/auth/me", { cache: "no-store" }).catch(() => null);
+      if (!meRes || meRes.status === 401) {
+        window.location.href = "/login";
+        return;
+      }
       const [clientsRes, contractsRes, knowledgeRes, profileRes] = await Promise.all([
         fetch("/api/storage/clients", { headers }),
         fetch("/api/storage/contracts", { headers }),
