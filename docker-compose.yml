@@ -27,6 +27,11 @@
     container_name: jurist3-onlyoffice
     ports:
       - "8080:80"
+    cpus: "1.5"
+    mem_limit: 3g
+    mem_reservation: 512m
+    pids_limit: 200
+    shm_size: 1g
     environment:
       - JWT_ENABLED=false
       - ALLOW_PRIVATE_IP_ADDRESS=true
