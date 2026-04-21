@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getStore, setStore } from "@/lib/storage-server";
 import { requireSessionUser } from "@/lib/auth";
+import { isUnauthorizedError, unauthorizedResponse } from "@/lib/http-errors";
 
 async function scopeFromSession() {
   const user = await requireSessionUser();
@@ -8,14 +9,24 @@ async function scopeFromSession() {
 }
 
 export async function GET(request: Request) {
-  const scope = await scopeFromSession();
-  const data = await getStore<unknown[]>("contracts_store", scope);
-  return NextResponse.json({ items: data });
+  try {
+    const scope = await scopeFromSession();
+    const data = await getStore<unknown[]>("contracts_store", scope);
+    return NextResponse.json({ items: data });
+  } catch (error) {
+    if (isUnauthorizedError(error)) return unauthorizedResponse();
+    throw error;
+  }
 }
 
 export async function POST(request: Request) {
-  const scope = await scopeFromSession();
-  const body = (await request.json()) as { items?: unknown[] };
-  await setStore("contracts_store", scope, body.items || []);
-  return NextResponse.json({ ok: true });
+  try {
+    const scope = await scopeFromSession();
+    const body = (await request.json()) as { items?: unknown[] };
+    await setStore("contracts_store", scope, body.items || []);
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    if (isUnauthorizedError(error)) return unauthorizedResponse();
+    throw error;
+  }
 }
