@@ -101,6 +101,9 @@ export function OnlyOfficeViewer({ fileUrl, fileName, mode = "view" }: Props) {
     if (!signed || !containerRef.current) return;
     const signedData = signed;
 
+    setLoadError(null);
+    setLoading(true);
+
     const onlyOfficeUrl = publicConfig?.onlyofficeUrl || "";
     if (!onlyOfficeUrl) {
       setLoadError("ONLYOFFICE url not configured.");
@@ -114,9 +117,11 @@ export function OnlyOfficeViewer({ fileUrl, fileName, mode = "view" }: Props) {
     const timeoutId = window.setTimeout(() => {
       setLoadError(`OnlyOffice not reachable: ${scriptSrc}`);
       setLoading(false);
-    }, 8000);
+    }, 30000);
 
     function initEditor() {
+      // Script can take a while to load behind tunnels/cold starts; avoid false negatives.
+      window.clearTimeout(timeoutId);
       if (!containerRef.current) return;
       if (!window || !(window as any).DocsAPI) {
         setLoadError("OnlyOffice API unavailable.");
@@ -194,13 +199,12 @@ export function OnlyOfficeViewer({ fileUrl, fileName, mode = "view" }: Props) {
           containerId,
           config,
         );
+        setLoadError(null);
         setLoading(false);
-        window.clearTimeout(timeoutId);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         setLoadError(`OnlyOffice init error: ${message}`);
         setLoading(false);
-        window.clearTimeout(timeoutId);
         return;
       }
 
