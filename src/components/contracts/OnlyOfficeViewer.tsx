@@ -210,9 +210,36 @@ export function OnlyOfficeViewer({ fileUrl, fileName, mode = "view" }: Props) {
 
     }
 
+    // If script already exists but points to a different host (e.g., tunnel URL changed),
+    // replace it to avoid using a stale script.
     if (existing) {
-      initEditor();
-      return;
+      const existingSrc = existing.getAttribute("src") || "";
+      if (existingSrc && existingSrc !== scriptSrc) {
+        existing.remove();
+      } else {
+        // Script may still be loading; don't fail fast just because DocsAPI isn't ready yet.
+        if ((window as any).DocsAPI) {
+          initEditor();
+          return;
+        }
+        const onLoad = () => initEditor();
+        const onError = () => {
+          window.clearTimeout(timeoutId);
+          setLoadError(`Failed to load OnlyOffice API: ${scriptSrc}`);
+          setLoading(false);
+        };
+        existing.addEventListener("load", onLoad, { once: true });
+        existing.addEventListener("error", onError, { once: true });
+        return () => {
+          window.clearTimeout(timeoutId);
+          existing.removeEventListener("load", onLoad);
+          existing.removeEventListener("error", onError);
+          if (editorRef.current) {
+            editorRef.current.destroyEditor?.();
+            editorRef.current = null;
+          }
+        };
+      }
     }
 
     const script = document.createElement("script");
