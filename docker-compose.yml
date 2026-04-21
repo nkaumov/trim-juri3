@@ -1,10 +1,19 @@
-﻿services:
+services:
+  jurist3-edge:
+    image: nginx:alpine
+    ports:
+      - "127.0.0.1:3001:80"
+    volumes:
+      - ./nginx/juri3-edge.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - jurist3-ui
+      - onlyoffice-documentserver
+    restart: unless-stopped
+
   jurist3-ui:
     build:
       context: .
       dockerfile: Dockerfile
-    ports:
-      - "3001:3000"
     env_file:
       - .env
     restart: unless-stopped
@@ -13,7 +22,7 @@
     image: postgres:16-alpine
     container_name: jurist3-db
     ports:
-      - "5433:5432"
+      - "127.0.0.1:5433:5432"
     environment:
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
@@ -26,7 +35,7 @@
     image: onlyoffice/documentserver:latest
     container_name: jurist3-onlyoffice
     ports:
-      - "8080:80"
+      - "127.0.0.1:8080:80"
     cpus: "${ONLYOFFICE_CPUS:-1.5}"
     mem_limit: "${ONLYOFFICE_MEM_LIMIT:-3g}"
     mem_reservation: "${ONLYOFFICE_MEM_RESERVATION:-512m}"
