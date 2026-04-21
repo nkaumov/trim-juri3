@@ -6,6 +6,7 @@ import type { ContractDraft } from "@/lib/contracts/types";
 import type { ProfileSettings } from "@/lib/profile/types";
 import type { KnowledgeDocument, KnowledgeScope, KnowledgeSection } from "@/lib/knowledge/types";
 import { usePublicConfig } from "@/lib/usePublicConfig";
+import { randomId } from "@/lib/uuid";
 
 type Section = "contracts" | "profile" | "knowledge" | "settings";
 
@@ -344,7 +345,7 @@ export function AppShell() {
     }
 
     const newClient: Client = {
-      id: crypto.randomUUID(),
+      id: randomId(),
       companyName: normalizedName,
       notes: notes.trim(),
       createdAt: new Date().toISOString(),
@@ -476,7 +477,7 @@ export function AppShell() {
     }
 
     const newDraft: ContractDraft = {
-      id: crypto.randomUUID(),
+      id: randomId(),
       clientId: selectedClientId,
       templateDocId: hasClientTemplate ? clientTemplateMeta!.docId : template!.id,
       templateName: hasClientTemplate ? clientTemplateMeta!.fileName : template!.fileName,
@@ -485,7 +486,7 @@ export function AppShell() {
       status: "draft",
       iterations: [
         {
-          id: crypto.randomUUID(),
+          id: randomId(),
           title: "Договор создан",
           content:
             `Шаблон договора: ${hasClientTemplate ? clientTemplateMeta!.fileName : template!.fileName}\n\n` +
@@ -538,7 +539,7 @@ export function AppShell() {
       }
 
       const doc: KnowledgeDocument = {
-        id: crypto.randomUUID(),
+        id: randomId(),
         tenantId: knowledgeScope.tenantId,
         agentId: knowledgeScope.agentId,
         section,
