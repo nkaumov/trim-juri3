@@ -19,9 +19,7 @@ export function middleware(request: NextRequest) {
 
   if (
     pathname.startsWith("/api/knowledge/files/") ||
-    pathname.startsWith("/api/contracts/files/") ||
-    pathname.startsWith("/api/files/sign") ||
-    pathname.startsWith("/api/contracts/onlyoffice-callback")
+    pathname.startsWith("/api/contracts/files/")
   ) {
     return NextResponse.next();
   }

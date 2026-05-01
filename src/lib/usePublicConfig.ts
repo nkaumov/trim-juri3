@@ -26,8 +26,6 @@ export function usePublicConfig(): {
   useEffect(() => {
     let active = true;
     if (cached) return;
-    setLoading(true);
-    setError(null);
 
     if (!inflight) {
       inflight = fetchPublicConfig();
@@ -60,4 +58,3 @@ export function usePublicConfig(): {
 
   return { config, error, loading };
 }
-

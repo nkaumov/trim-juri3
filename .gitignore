@@ -40,3 +40,10 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local debug artifacts
+log_json
+tmp_*.json
+tmp_*.txt
+api_key
+pkatform_response

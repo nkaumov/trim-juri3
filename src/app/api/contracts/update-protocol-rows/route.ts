@@ -14,10 +14,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "invalid payload" }, { status: 400 });
     }
 
-    const contracts = await getStore<any[]>("contracts_store", scope);
+    const contracts = await getStore<Record<string, unknown>[]>("contracts_store", scope);
     const list = Array.isArray(contracts) ? contracts : [];
     const updated = list.map((item) => {
-      if (!item || item.id !== contractId) return item;
+      if (!item || String(item["id"] || "") !== contractId) return item;
       return {
         ...item,
         protocolRows: body.rows,

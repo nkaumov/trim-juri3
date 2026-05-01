@@ -5,7 +5,7 @@ export type StorageScope = {
   agentId: string;
 };
 
-type TableName = "clients_store" | "contracts_store" | "knowledge_store" | "profile_store";
+type TableName = "clients_store" | "contracts_store" | "knowledge_store" | "analysis_store";
 
 export async function getStore<T>(table: TableName, scope: StorageScope): Promise<T> {
   const db = await ensureDb();
@@ -14,9 +14,6 @@ export async function getStore<T>(table: TableName, scope: StorageScope): Promis
     [scope.tenantId, scope.agentId],
   );
   if (result.rowCount === 0) {
-    if (table === "profile_store") {
-      return {} as T;
-    }
     return [] as T;
   }
   return result.rows[0].data as T;
@@ -24,7 +21,7 @@ export async function getStore<T>(table: TableName, scope: StorageScope): Promis
 
 export async function setStore<T>(table: TableName, scope: StorageScope, data: T): Promise<void> {
   const db = await ensureDb();
-  const payload = JSON.stringify(data ?? (table === "profile_store" ? {} : []));
+  const payload = JSON.stringify(data ?? []);
   await db.query(
     `INSERT INTO ${table} (tenant_id, agent_id, data, updated_at)
      VALUES ($1, $2, $3, now())

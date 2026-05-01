@@ -78,10 +78,10 @@ export async function ensureDb(): Promise<Pool> {
         );
       `);
       await pg.query(`
-        CREATE TABLE IF NOT EXISTS profile_store (
+        CREATE TABLE IF NOT EXISTS analysis_store (
           tenant_id text NOT NULL,
           agent_id text NOT NULL,
-          data jsonb NOT NULL DEFAULT '{}'::jsonb,
+          data jsonb NOT NULL DEFAULT '[]'::jsonb,
           updated_at timestamptz NOT NULL DEFAULT now(),
           PRIMARY KEY (tenant_id, agent_id)
         );

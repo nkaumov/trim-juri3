@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
-import mammoth from "mammoth";
 import PizZip from "pizzip";
 import { requireSessionUser } from "@/lib/auth";
 import { getStore, setStore } from "@/lib/storage-server";
 import { getDocument } from "@/lib/documents";
+import { extractPlainTextFromBuffer } from "@/lib/document-text";
 import type {
   ProtocolComment,
   ProtocolInputMode,
@@ -51,6 +51,19 @@ function parseMode(value: string): ProtocolInputMode {
 
 function asString(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object") return {};
+  return value as Record<string, unknown>;
+}
+
+function isProtocolColumnTitles(
+  value: unknown,
+): value is { client: string; our: string; agreed: string } {
+  if (!value || typeof value !== "object") return false;
+  const v = value as Record<string, unknown>;
+  return typeof v.client === "string" && typeof v.our === "string" && typeof v.agreed === "string";
 }
 
 function escapeRegExp(value: string): string {
@@ -121,37 +134,6 @@ function buildTemplateClauseSnippets(
     if (snippet) result[clause] = snippet;
   }
   return result;
-}
-
-async function extractText(buffer: Buffer, fileName: string): Promise<string> {
-  const ext = fileName.split(".").pop()?.toLowerCase() ?? "";
-
-  if (ext === "docx") {
-    try {
-      const result = await mammoth.extractRawText({ buffer });
-      return result.value || "";
-    } catch {
-      return "";
-    }
-  }
-
-  if (ext === "pdf") {
-    try {
-      const { PDFParse } = await import("pdf-parse");
-      const parser = new PDFParse({ data: buffer });
-      const result = await parser.getText();
-      await parser.destroy();
-      return result.text || "";
-    } catch {
-      return "";
-    }
-  }
-
-  if (ext === "txt") {
-    return buffer.toString("utf-8");
-  }
-
-  return "";
 }
 
 function extractDocxComments(buffer: Buffer): string[] {
@@ -333,7 +315,7 @@ export async function POST(request: Request) {
     if (templateDocId) {
       const templateDoc = await getDocument(templateDocId, scope);
       if (templateDoc) {
-        templateText = await extractText(templateDoc.buffer, templateDoc.fileName);
+        templateText = await extractPlainTextFromBuffer(templateDoc.buffer, templateDoc.fileName);
       }
     }
 
@@ -342,25 +324,40 @@ export async function POST(request: Request) {
 
     const knowledge = await getStore<Record<string, unknown>[]>("knowledge_store", scope);
     if (Array.isArray(knowledge)) {
+      const templateKnowledgeDoc = knowledge.find((item) => {
+        if (item?.section !== "templates") return false;
+        const sameId = asString(item?.id) && asString(item?.id) === asString(contract.templateDocId);
+        const sameFile = extractDocumentId(asString(item?.fileUrl)) === templateDocId;
+        const sameName = asString(item?.fileName) && asString(item?.fileName) === asString(contract.templateName);
+        return sameId || sameFile || sameName;
+      });
+
+      const inlineRules = normalizeSpace(asString(asRecord(templateKnowledgeDoc)["rules"]));
+      if (inlineRules) {
+        rulesText = inlineRules;
+      }
+
       const rulesDocs = knowledge.filter((item) => item?.section === "rules" && item?.fileUrl);
-      const lawsDocs = knowledge.filter((item) => item?.section === "laws" && item?.fileUrl);
+      const lawsDocs = knowledge.filter(
+        (item) => (item?.section === "laws" || item?.section === "fz") && item?.fileUrl,
+      );
 
       const rulesDocId =
         rulesDocs.length > 0 ? extractDocumentId(asString(rulesDocs[0].fileUrl)) : null;
       const lawsDocId =
         lawsDocs.length > 0 ? extractDocumentId(asString(lawsDocs[0].fileUrl)) : null;
 
-      if (rulesDocId) {
+      if (!rulesText && rulesDocId) {
         const doc = await getDocument(rulesDocId, scope);
         if (doc) {
-          rulesText = await extractText(doc.buffer, doc.fileName);
+          rulesText = await extractPlainTextFromBuffer(doc.buffer, doc.fileName);
         }
       }
 
       if (lawsDocId) {
         const doc = await getDocument(lawsDocId, scope);
         if (doc) {
-          lawsText = await extractText(doc.buffer, doc.fileName);
+          lawsText = await extractPlainTextFromBuffer(doc.buffer, doc.fileName);
         }
       }
     }
@@ -369,7 +366,7 @@ export async function POST(request: Request) {
 
     if (file) {
       const buffer = Buffer.from(await file.arrayBuffer());
-      const fileText = await extractText(buffer, file.name);
+      const fileText = await extractPlainTextFromBuffer(buffer, file.name);
       const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
       const commentText = ext === "docx" ? extractDocxComments(buffer).join("\n") : "";
       if (mode === "edited-template") {
@@ -407,17 +404,20 @@ export async function POST(request: Request) {
     if (protocolDocId) {
       const protocolDoc = await getDocument(protocolDocId, scope);
       if (protocolDoc) {
-        existingProtocolText = await extractText(protocolDoc.buffer, protocolDoc.fileName);
+        existingProtocolText = await extractPlainTextFromBuffer(protocolDoc.buffer, protocolDoc.fileName);
       }
     }
 
     const systemPrompt = await readPrompt();
 
-    const iterations = Array.isArray((contract as any).iterations)
-      ? ((contract as any).iterations as Array<{ content?: unknown }>)
+    const iterationsValue = asRecord(contract)["iterations"];
+    const iterations = Array.isArray(iterationsValue)
+      ? (iterationsValue as Array<Record<string, unknown>>)
       : [];
     const currentDocumentText =
-      iterations.length > 0 ? asString(iterations[iterations.length - 1]?.content) : "";
+      iterations.length > 0
+        ? asString(asRecord(iterations[iterations.length - 1])["content"])
+        : "";
 
     const clauseIds = extractClauseIds(
       [
@@ -435,12 +435,14 @@ export async function POST(request: Request) {
       templateText,
       templateClauses,
       templateClauseSnippets,
-      protocolColumnTitles: (contract as any).protocolColumnTitles || null,
+      protocolColumnTitles: isProtocolColumnTitles(asRecord(contract)["protocolColumnTitles"])
+        ? (asRecord(contract)["protocolColumnTitles"] as { client: string; our: string; agreed: string })
+        : null,
       currentDocumentText,
       existingRows,
       existingComments,
-      existingSummary: normalizeSpace(asString((contract as any).protocolSummary)),
-      existingRecommendation: normalizeSpace(asString((contract as any).protocolRecommendation)),
+      existingSummary: normalizeSpace(asString(asRecord(contract)["protocolSummary"])),
+      existingRecommendation: normalizeSpace(asString(asRecord(contract)["protocolRecommendation"])),
       existingProtocolText,
       newInputText,
       rulesText,
@@ -472,18 +474,18 @@ export async function POST(request: Request) {
     // 2) comments.was should quote the template clause verbatim when possible
     const rowClauses = new Set(
       (engineResult.rows || [])
-        .map((row) => normalizeSpace(String((row as any)?.clause || "")))
+        .map((row) => normalizeSpace(asString(asRecord(row)["clause"])))
         .filter(Boolean),
     );
 
     const normalizedComments = (engineResult.comments || [])
       .filter((comment) => {
-        const clause = normalizeSpace(String((comment as any)?.clause || ""));
+        const clause = normalizeSpace(asString(asRecord(comment)["clause"]));
         if (!clause) return true;
         return rowClauses.has(clause);
       })
       .map((comment) => {
-        const clause = normalizeSpace(String((comment as any)?.clause || ""));
+        const clause = normalizeSpace(asString(asRecord(comment)["clause"]));
         const templateWas = clause ? templateClauseSnippets[clause] : "";
         if (!templateWas) return comment;
         return {

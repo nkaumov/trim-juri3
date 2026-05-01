@@ -2,12 +2,12 @@
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import type { ContractDraft } from "@/lib/contracts/types";
-import type { ProfileSettings } from "@/lib/profile/types";
-import type { KnowledgeDocument, KnowledgeScope, KnowledgeSection } from "@/lib/knowledge/types";
+import type { ContractDraft, ProtocolRow } from "@/lib/contracts/types";
+import type { KnowledgeDocument, KnowledgeScope } from "@/lib/knowledge/types";
 import { usePublicConfig } from "@/lib/usePublicConfig";
+import type { RiskAnalysisCase, RiskComment, RiskSeverity } from "@/lib/analysis/types";
 
-type Section = "contracts" | "profile" | "knowledge" | "settings";
+type Section = "dashboard" | "contracts" | "analysis" | "knowledge";
 
 type Client = {
   id: string;
@@ -17,32 +17,10 @@ type Client = {
 };
 
 const navItems: Array<{ id: Section; label: string }> = [
-  { id: "contracts", label: "Работа с договорами" },
-  { id: "profile", label: "Профиль" },
+  { id: "dashboard", label: "Дашборд" },
+  { id: "contracts", label: "Работа с контрагентами" },
+  { id: "analysis", label: "Анализ рисков" },
   { id: "knowledge", label: "База знаний" },
-  { id: "settings", label: "Настройки" },
-];
-
-const knowledgeItems: Array<{
-  id: KnowledgeSection;
-  title: string;
-  subtitle: string;
-}> = [
-  {
-    id: "templates",
-    title: "Шаблоны",
-    subtitle: "Договоры, которые используются как база при подписании.",
-  },
-  {
-    id: "rules",
-    title: "Правила",
-    subtitle: "Набор правил для проверки формулировок и автокомментариев.",
-  },
-  {
-    id: "fz",
-    title: "ФЗ",
-    subtitle: "Нормативная база и выдержки из федеральных законов.",
-  },
 ];
 
 function formatDate(value: string): string {
@@ -65,6 +43,98 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 }
 
+function severityLabel(value: RiskSeverity): string {
+  if (value === "high") return "высокий риск";
+  if (value === "medium") return "средний риск";
+  return "низкий риск";
+}
+
+function severityClass(value: RiskSeverity): string {
+  if (value === "high") return "severity-critical";
+  if (value === "medium") return "severity-moderate";
+  return "severity-minor";
+}
+
+function asString(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function asArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+}
+
+function normalizeRiskSeverity(value: unknown): RiskSeverity {
+  const raw = asString(value).trim().toLowerCase();
+  if (raw === "high" || raw === "critical") return "high";
+  if (raw === "medium" || raw === "moderate") return "medium";
+  if (raw === "low" || raw === "minor") return "low";
+  return "medium";
+}
+
+type PlatformOutputProtocolRow = {
+  clause?: unknown;
+  client_text?: unknown;
+  clientText?: unknown;
+  our_text?: unknown;
+  ourText?: unknown;
+};
+
+function mapPlatformOutputToProtocolRows(output: Record<string, unknown>): ProtocolRow[] {
+  const rows = asArray(output["protocol_rows"] ?? output["protocolRows"]);
+  const mapped: ProtocolRow[] = [];
+  for (const raw of rows) {
+    if (!raw || typeof raw !== "object") continue;
+    const row = raw as PlatformOutputProtocolRow;
+    const clause = asString(row.clause).trim() || "\u2014";
+    const clientText = asString(row.client_text ?? row.clientText).trim();
+    const ourText = asString(row.our_text ?? row.ourText).trim();
+    if (!clientText && !ourText) continue;
+    mapped.push({ clause, clientText, ourText });
+  }
+  return mapped;
+}
+
+function mapPlatformOutputToRiskComments(output: Record<string, unknown>): RiskComment[] {
+  const rawItems = asArray(
+    output["items"] ??
+      output["risk_items"] ??
+      output["riskItems"] ??
+      output["risks"] ??
+      output["comments"] ??
+      [],
+  );
+
+  const mapped: RiskComment[] = [];
+  for (const raw of rawItems) {
+    if (!raw || typeof raw !== "object") continue;
+    const item = asRecord(raw);
+    const title =
+      asString(item["title"]).trim() ||
+      asString(item["clause"]).trim() ||
+      asString(item["id"]).trim() ||
+      "Риск";
+    const details =
+      asString(item["details"]).trim() ||
+      asString(item["comment"] ?? item["aiComment"] ?? item["text"]).trim() ||
+      "Комментарий не указан.";
+    const basis = asString(item["basis"] ?? item["law"] ?? item["grounds"] ?? item["guidance"]).trim();
+
+    mapped.push({
+      id: asString(item["id"]).trim() || crypto.randomUUID(),
+      severity: normalizeRiskSeverity(item["severity"]),
+      title,
+      details,
+      basis: basis || undefined,
+    });
+  }
+
+  return mapped;
+}
+
 export function AppShell() {
   const { config: publicConfig } = usePublicConfig();
   const tenantId = publicConfig?.platformTenantId ?? "local-tenant";
@@ -72,40 +142,15 @@ export function AppShell() {
   const knowledgeScope: KnowledgeScope = { tenantId, agentId };
 
   const [hydrated, setHydrated] = useState(false);
-  const [activeSection, setActiveSection] = useState<Section>("contracts");
-  const [openKnowledgeSection, setOpenKnowledgeSection] =
-    useState<KnowledgeSection | null>("templates");
+  const [activeSection, setActiveSection] = useState<Section>("dashboard");
   const [clients, setClients] = useState<Client[]>([]);
   const [contracts, setContracts] = useState<ContractDraft[]>([]);
   const [knowledgeDocs, setKnowledgeDocs] = useState<KnowledgeDocument[]>([]);
+  const [analysisCases, setAnalysisCases] = useState<RiskAnalysisCase[]>([]);
   const [clientsLoaded, setClientsLoaded] = useState(false);
   const [contractsLoaded, setContractsLoaded] = useState(false);
   const [knowledgeLoaded, setKnowledgeLoaded] = useState(false);
-  const [profileLoaded, setProfileLoaded] = useState(false);
-  const defaultProfile: ProfileSettings = {
-    googleDocs: {
-      enabled: false,
-      driveFolderId: "",
-      credentialsJson: "",
-    },
-    gmail: {
-      enabled: false,
-      fromEmail: "",
-      appPassword: "",
-      smtpHost: "smtp.gmail.com",
-      smtpPort: "465",
-    },
-    companyAutofill: {
-      legalName: "",
-      inn: "",
-      kpp: "",
-      ogrn: "",
-      signerName: "",
-      signerRole: "",
-      legalAddress: "",
-    },
-  };
-  const [profileSettings, setProfileSettings] = useState<ProfileSettings>(defaultProfile);
+  const [analysisLoaded, setAnalysisLoaded] = useState(false);
 
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
   const [contractsViewMode, setContractsViewMode] = useState<"active" | "archive">("active");
@@ -114,10 +159,26 @@ export function AppShell() {
   const [companyName, setCompanyName] = useState("");
   const [notes, setNotes] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
+  const [createClientBusy, setCreateClientBusy] = useState(false);
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
   const [composeError, setComposeError] = useState<string | null>(null);
   const [isTemplateDropdownOpen, setIsTemplateDropdownOpen] = useState(false);
-  const [knowledgeUploadError, setKnowledgeUploadError] = useState<string | null>(null);
+  const [templateUploadError, setTemplateUploadError] = useState<string | null>(null);
+  const [templateUploadBusy, setTemplateUploadBusy] = useState(false);
+  const [templateUploadFile, setTemplateUploadFile] = useState<File | null>(null);
+  const [templateUploadFileKey, setTemplateUploadFileKey] = useState(0);
+  const [templateUploadTitle, setTemplateUploadTitle] = useState("");
+  const [templateUploadSourceType, setTemplateUploadSourceType] = useState("template");
+  const [templateUploadTags, setTemplateUploadTags] = useState("");
+  const [templateUploadRules, setTemplateUploadRules] = useState("");
+  const [isTemplateUploadModalOpen, setIsTemplateUploadModalOpen] = useState(false);
+  const [templateDetailsId, setTemplateDetailsId] = useState<string | null>(null);
+  const [templateDetailsEditing, setTemplateDetailsEditing] = useState(false);
+  const [templateDetailsTitle, setTemplateDetailsTitle] = useState("");
+  const [templateDetailsSourceType, setTemplateDetailsSourceType] = useState("template");
+  const [templateDetailsTags, setTemplateDetailsTags] = useState("");
+  const [templateDetailsRules, setTemplateDetailsRules] = useState("");
+  const [templateDetailsError, setTemplateDetailsError] = useState<string | null>(null);
   const [clientTemplateMeta, setClientTemplateMeta] = useState<{
     docId: string;
     fileUrl: string;
@@ -127,18 +188,76 @@ export function AppShell() {
   const [clientTemplateUploading, setClientTemplateUploading] = useState(false);
   const [clientTemplateError, setClientTemplateError] = useState<string | null>(null);
 
-  const fileInputsRef = useRef<Record<KnowledgeSection, HTMLInputElement | null>>({
-    templates: null,
-    rules: null,
-    fz: null,
-  });
+  const [analysisActiveId, setAnalysisActiveId] = useState<string | null>(null);
+  const [analysisUploadBusy, setAnalysisUploadBusy] = useState(false);
+  const [analysisUploadError, setAnalysisUploadError] = useState<string | null>(null);
+  const [analysisUploadFile, setAnalysisUploadFile] = useState<File | null>(null);
+  const [analysisUploadFileKey, setAnalysisUploadFileKey] = useState(0);
+  const [analysisTitle, setAnalysisTitle] = useState("");
+  const [isAnalysisUploadModalOpen, setIsAnalysisUploadModalOpen] = useState(false);
+  const [analysisActiveTab, setAnalysisActiveTab] = useState<"ai" | "protocol" | "text">("ai");
+  const [analysisRunBusy, setAnalysisRunBusy] = useState(false);
+  const [analysisRunError, setAnalysisRunError] = useState<string | null>(null);
+  const [analysisProtocolDraft, setAnalysisProtocolDraft] = useState<
+    Array<{ clause: string; clientText: string; ourText: string }>
+  >([]);
+
   const templateDropdownRef = useRef<HTMLDivElement | null>(null);
   const clientTemplateInputRef = useRef<HTMLInputElement | null>(null);
 
+  const templateDetailsDoc = useMemo(() => {
+    if (!templateDetailsId) return null;
+    return knowledgeDocs.find((doc) => doc.id === templateDetailsId) ?? null;
+  }, [knowledgeDocs, templateDetailsId]);
+
+
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setHydrated(true);
   }, []);
+
+  useEffect(() => {
+    if (!analysisActiveId) {
+      setAnalysisProtocolDraft([]);
+      return;
+    }
+    const active = analysisCases.find((item) => item.id === analysisActiveId) ?? null;
+    if (!active) {
+      setAnalysisProtocolDraft([]);
+      return;
+    }
+    if (!Array.isArray(active.protocolRows) || active.protocolRows.length === 0) {
+      setAnalysisProtocolDraft([]);
+      return;
+    }
+    setAnalysisProtocolDraft(
+      active.protocolRows.map((row) => ({
+        clause: String(row.clause || ""),
+        clientText: String(row.clientText || ""),
+        ourText: String(row.ourText || ""),
+      })),
+    );
+  }, [analysisActiveId, analysisCases]);
+
+  useEffect(() => {
+    if (!templateDetailsDoc) {
+      setTemplateDetailsEditing(false);
+      setTemplateDetailsTitle("");
+      setTemplateDetailsSourceType("template");
+      setTemplateDetailsTags("");
+      setTemplateDetailsRules("");
+      setTemplateDetailsError(null);
+      return;
+    }
+
+    setTemplateDetailsEditing(false);
+    setTemplateDetailsTitle(templateDetailsDoc.fileName || "");
+    setTemplateDetailsSourceType(templateDetailsDoc.sourceType || "template");
+    setTemplateDetailsTags(
+      Array.isArray(templateDetailsDoc.tags) ? templateDetailsDoc.tags.join(", ") : "",
+    );
+    setTemplateDetailsRules(templateDetailsDoc.rules || "");
+    setTemplateDetailsError(null);
+  }, [templateDetailsDoc]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -152,42 +271,29 @@ export function AppShell() {
         window.location.href = "/login";
         return;
       }
-      const [clientsRes, contractsRes, knowledgeRes, profileRes] = await Promise.all([
+      const [clientsRes, contractsRes, knowledgeRes, analysisRes] = await Promise.all([
         fetch("/api/storage/clients", { headers }),
         fetch("/api/storage/contracts", { headers }),
         fetch("/api/storage/knowledge", { headers }),
-        fetch("/api/storage/profile", { headers }),
+        fetch("/api/storage/analysis", { headers }),
       ]);
-      if ([clientsRes, contractsRes, knowledgeRes, profileRes].some((res) => res.status === 401)) {
+      if ([clientsRes, contractsRes, knowledgeRes, analysisRes].some((res) => res.status === 401)) {
         window.location.href = "/login";
         return;
       }
       const clientsPayload = (await clientsRes.json().catch(() => null)) as { items?: Client[] } | null;
       const contractsPayload = (await contractsRes.json().catch(() => null)) as { items?: ContractDraft[] } | null;
       const knowledgePayload = (await knowledgeRes.json().catch(() => null)) as { items?: KnowledgeDocument[] } | null;
-      const profilePayload = (await profileRes.json().catch(() => null)) as { data?: ProfileSettings } | null;
+      const analysisPayload = (await analysisRes.json().catch(() => null)) as { items?: RiskAnalysisCase[] } | null;
 
       if (Array.isArray(clientsPayload?.items)) setClients(clientsPayload.items);
       if (Array.isArray(contractsPayload?.items)) setContracts(contractsPayload.items);
       if (Array.isArray(knowledgePayload?.items)) setKnowledgeDocs(knowledgePayload.items);
+      if (Array.isArray(analysisPayload?.items)) setAnalysisCases(analysisPayload.items);
       setClientsLoaded(true);
       setContractsLoaded(true);
       setKnowledgeLoaded(true);
-      if (profilePayload?.data) {
-        setProfileSettings({
-          ...defaultProfile,
-          ...profilePayload.data,
-          googleDocs: {
-            ...defaultProfile.googleDocs,
-            ...(profilePayload.data as ProfileSettings).googleDocs,
-          },
-          gmail: {
-            ...defaultProfile.gmail,
-            ...(profilePayload.data as ProfileSettings).gmail,
-          },
-        });
-      }
-      setProfileLoaded(true);
+      setAnalysisLoaded(true);
     })();
   }, [hydrated]);
 
@@ -264,7 +370,7 @@ export function AppShell() {
   }, [knowledgeDocs, hydrated, knowledgeLoaded]);
 
   useEffect(() => {
-    if (!hydrated || !profileLoaded) return;
+    if (!hydrated || !analysisLoaded) return;
     const headers = {
       "Content-Type": "application/json",
       "x-tenant-id": knowledgeScope.tenantId,
@@ -273,10 +379,10 @@ export function AppShell() {
 
     const controller = new AbortController();
     const timeoutId = window.setTimeout(() => {
-      void fetch("/api/storage/profile", {
+      void fetch("/api/storage/analysis", {
         method: "POST",
         headers,
-        body: JSON.stringify({ data: profileSettings }),
+        body: JSON.stringify({ items: analysisCases }),
         signal: controller.signal,
       }).catch(() => null);
     }, 400);
@@ -285,7 +391,7 @@ export function AppShell() {
       controller.abort();
       window.clearTimeout(timeoutId);
     };
-  }, [profileSettings, hydrated, profileLoaded]);
+  }, [analysisCases, hydrated, analysisLoaded]);
 
   useEffect(() => {
     function handleOutsideClick(event: MouseEvent) {
@@ -334,8 +440,10 @@ export function AppShell() {
     [availableTemplates, selectedTemplateId],
   );
 
-  function createClient(event: FormEvent<HTMLFormElement>) {
+  async function createClient(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
+    if (createClientBusy) return;
 
     const normalizedName = companyName.trim();
     if (!normalizedName) {
@@ -350,11 +458,34 @@ export function AppShell() {
       createdAt: new Date().toISOString(),
     };
 
-    setClients((prev) => [newClient, ...prev]);
-    setCompanyName("");
-    setNotes("");
+    const nextClients = [newClient, ...clients];
+    const headers = {
+      "Content-Type": "application/json",
+      "x-tenant-id": knowledgeScope.tenantId,
+      "x-agent-id": knowledgeScope.agentId,
+    };
+
+    setCreateClientBusy(true);
     setFormError(null);
-    setIsCreateModalOpen(false);
+    try {
+      const response = await fetch("/api/storage/clients", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ items: nextClients }),
+      });
+      if (!response.ok) {
+        throw new Error("save failed");
+      }
+
+      setClients(nextClients);
+      setCompanyName("");
+      setNotes("");
+      setIsCreateModalOpen(false);
+    } catch {
+      setFormError("Не удалось сохранить организацию. Попробуйте еще раз.");
+    } finally {
+      setCreateClientBusy(false);
+    }
   }
 
   function openClient(clientId: string) {
@@ -372,6 +503,7 @@ export function AppShell() {
     setCompanyName("");
     setNotes("");
     setFormError(null);
+    setCreateClientBusy(false);
   }
 
   function openComposeModal() {
@@ -501,68 +633,330 @@ export function AppShell() {
     closeComposeModal();
   }
 
-  function triggerFilePicker(section: KnowledgeSection) {
-    fileInputsRef.current[section]?.click();
-  }
+  async function uploadTemplate(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
 
-  async function addKnowledgeFiles(section: KnowledgeSection, fileList: FileList | null) {
-    if (!fileList || fileList.length === 0) {
+    const file = templateUploadFile;
+    const normalizedTitle = templateUploadTitle.trim();
+    const normalizedSourceType = templateUploadSourceType.trim() || "template";
+    const tags = templateUploadTags
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+    const normalizedRules = templateUploadRules.trim();
+
+    if (!file) {
+      setTemplateUploadError("Выберите файл шаблона.");
       return;
     }
 
-    const docs: KnowledgeDocument[] = [];
-    const failedFiles: string[] = [];
-    setKnowledgeUploadError(null);
-
-    for (const file of Array.from(fileList)) {
-      const formData = new FormData();
-      formData.append("file", file);
-
-      let fileUrl: string | undefined;
-      try {
-        const response = await fetch("/api/knowledge/upload", {
-          method: "POST",
-          body: formData,
-        });
-        if (response.ok) {
-          const payload = (await response.json()) as { fileUrl?: string };
-          fileUrl = payload.fileUrl;
-        }
-      } catch {
-        fileUrl = undefined;
-      }
-
-      if (!fileUrl) {
-        failedFiles.push(file.name);
-        continue;
-      }
-
-      const doc: KnowledgeDocument = {
-        id: crypto.randomUUID(),
-        tenantId: knowledgeScope.tenantId,
-        agentId: knowledgeScope.agentId,
-        section,
-        fileName: file.name,
-        fileUrl,
-        fileSize: file.size,
-        mimeType: file.type || "application/octet-stream",
-        uploadedAt: new Date().toISOString(),
-      };
-
-      docs.push(doc);
+    if (!normalizedTitle) {
+      setTemplateUploadError("Укажите название шаблона.");
+      return;
     }
 
-    if (failedFiles.length > 0) {
-      setKnowledgeUploadError(
-        `Не удалось загрузить ${failedFiles.length} файл(ов): ${failedFiles.join(", ")}`,
-      );
+    setTemplateUploadBusy(true);
+    setTemplateUploadError(null);
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    let fileUrl: string | undefined;
+    try {
+      const response = await fetch("/api/knowledge/upload", {
+        method: "POST",
+        body: formData,
+      });
+      if (response.ok) {
+        const payload = (await response.json()) as { fileUrl?: string };
+        fileUrl = payload.fileUrl;
+      }
+    } catch {
+      fileUrl = undefined;
     }
 
-    setKnowledgeDocs((prev) => [...docs, ...prev]);
+    if (!fileUrl) {
+      setTemplateUploadError("Не удалось загрузить файл. Попробуйте еще раз.");
+      setTemplateUploadBusy(false);
+      return;
+    }
+
+    const urlDocId = fileUrl.split("/").filter(Boolean).slice(-1)[0];
+    const doc: KnowledgeDocument = {
+      id: urlDocId || crypto.randomUUID(),
+      tenantId: knowledgeScope.tenantId,
+      agentId: knowledgeScope.agentId,
+      section: "templates",
+      fileName: normalizedTitle,
+      originalFileName: file.name,
+      sourceType: normalizedSourceType,
+      tags,
+      rules: normalizedRules ? normalizedRules : undefined,
+      fileUrl,
+      fileSize: file.size,
+      mimeType: file.type || "application/octet-stream",
+      uploadedAt: new Date().toISOString(),
+    };
+
+    setKnowledgeDocs((prev) => [doc, ...prev]);
+    setTemplateUploadFile(null);
+    setTemplateUploadTitle("");
+    setTemplateUploadSourceType("template");
+    setTemplateUploadTags("");
+    setTemplateUploadRules("");
+    setTemplateUploadFileKey((value) => value + 1);
+    setTemplateUploadBusy(false);
+    setIsTemplateUploadModalOpen(false);
   }
 
   function removeKnowledgeDoc(id: string) {
     setKnowledgeDocs((prev) => prev.filter((doc) => doc.id !== id));
+  }
+
+  function closeTemplateDetails() {
+    setTemplateDetailsId(null);
+  }
+
+  function startTemplateDetailsEdit() {
+    if (!templateDetailsDoc) return;
+    setTemplateDetailsEditing(true);
+    setTemplateDetailsError(null);
+  }
+
+  function cancelTemplateDetailsEdit() {
+    if (!templateDetailsDoc) {
+      setTemplateDetailsEditing(false);
+      return;
+    }
+    setTemplateDetailsEditing(false);
+    setTemplateDetailsTitle(templateDetailsDoc.fileName || "");
+    setTemplateDetailsSourceType(templateDetailsDoc.sourceType || "template");
+    setTemplateDetailsTags(
+      Array.isArray(templateDetailsDoc.tags) ? templateDetailsDoc.tags.join(", ") : "",
+    );
+    setTemplateDetailsRules(templateDetailsDoc.rules || "");
+    setTemplateDetailsError(null);
+  }
+
+  function saveTemplateDetails() {
+    if (!templateDetailsDoc) return;
+
+    const title = templateDetailsTitle.trim();
+    if (!title) {
+      setTemplateDetailsError("Укажите название шаблона.");
+      return;
+    }
+
+    const sourceType = templateDetailsSourceType.trim() || "template";
+    const tags = templateDetailsTags
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+    const rules = templateDetailsRules.trim();
+
+    setKnowledgeDocs((prev) =>
+      prev.map((doc) =>
+        doc.id === templateDetailsDoc.id
+          ? {
+              ...doc,
+              fileName: title,
+              sourceType,
+              tags,
+              rules: rules ? rules : undefined,
+            }
+          : doc,
+      ),
+    );
+
+    setTemplateDetailsEditing(false);
+    setTemplateDetailsError(null);
+  }
+
+  function openAnalysisCase(caseId: string) {
+    setAnalysisActiveId(caseId);
+    setAnalysisActiveTab("ai");
+    setAnalysisUploadError(null);
+    setAnalysisRunError(null);
+  }
+
+  async function persistAnalysisCases(items: RiskAnalysisCase[]) {
+    await fetch("/api/storage/analysis", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ items }),
+    });
+  }
+
+  async function runRiskAnalysis(caseId: string) {
+    if (!caseId) return;
+    setAnalysisRunBusy(true);
+    setAnalysisRunError(null);
+    try {
+      const response = await fetch("/api/platform/debug-risk-input", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ analysisCaseId: caseId }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { platformOutput?: unknown; platformError?: unknown; error?: unknown }
+        | null;
+
+      if (!response.ok) {
+        const msg =
+          (payload?.platformError ? String(payload.platformError) : "") ||
+          (payload?.error ? String(payload.error) : "") ||
+          "Не удалось получить ответ от платформы.";
+        setAnalysisRunError(msg);
+        setAnalysisRunBusy(false);
+        return;
+      }
+
+      if (!payload?.platformOutput || typeof payload.platformOutput !== "object") {
+        setAnalysisRunError("Ответ платформы не распознан как JSON. Проверьте prompt агента.");
+        setAnalysisRunBusy(false);
+        return;
+      }
+
+      const output = payload.platformOutput as Record<string, unknown>;
+      const rows = mapPlatformOutputToProtocolRows(output);
+      const comments = mapPlatformOutputToRiskComments(output);
+      const summary = asString(output["summary"]).trim();
+      const recommendation = asString(output["recommendation"]).trim();
+
+      setAnalysisCases((prev) =>
+        prev.map((item) =>
+          item.id === caseId
+            ? {
+                ...item,
+                status: "ready",
+                aiSummary: summary || recommendation || "Ответ получен.",
+                aiComments: comments,
+                protocolRows: rows,
+              }
+            : item,
+        ),
+      );
+
+      setAnalysisActiveId(caseId);
+      setAnalysisActiveTab("ai");
+    } catch {
+      setAnalysisRunError("Не удалось получить ответ от платформы.");
+    } finally {
+      setAnalysisRunBusy(false);
+    }
+  }
+
+  function deleteAnalysisCase(caseId: string) {
+    setAnalysisCases((prev) => {
+      const next = prev.filter((item) => item.id !== caseId);
+      if (analysisActiveId === caseId) {
+        setAnalysisActiveId(next[0]?.id ?? null);
+      }
+      return next;
+    });
+  }
+
+  function clearAnalysisHistory() {
+    setAnalysisCases([]);
+    setAnalysisActiveId(null);
+    setAnalysisProtocolDraft([]);
+    setAnalysisRunError(null);
+  }
+
+  async function uploadAnalysisDocument(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const file = analysisUploadFile;
+    const title = analysisTitle.trim();
+
+    if (!file) {
+      setAnalysisUploadError("Выберите документ контрагента.");
+      return;
+    }
+
+    setAnalysisUploadBusy(true);
+    setAnalysisUploadError(null);
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    try {
+      const response = await fetch("/api/analysis/upload", {
+        method: "POST",
+        body: formData,
+      });
+      if (!response.ok) {
+        setAnalysisUploadError("Не удалось загрузить документ. Попробуйте еще раз.");
+        setAnalysisUploadBusy(false);
+        return;
+      }
+      const payload = (await response.json()) as {
+        ok?: boolean;
+        docId?: string;
+        fileUrl?: string;
+        fileName?: string;
+        fileSize?: number;
+        mimeType?: string;
+        extractedText?: string;
+      };
+      if (!payload?.docId || !payload?.fileUrl) {
+        setAnalysisUploadError("Не удалось загрузить документ. Попробуйте еще раз.");
+        setAnalysisUploadBusy(false);
+        return;
+      }
+
+      const extractedText = String(payload.extractedText || "");
+
+      const newCase: RiskAnalysisCase = {
+        id: crypto.randomUUID(),
+        tenantId: knowledgeScope.tenantId,
+        agentId: knowledgeScope.agentId,
+        title: title || payload.fileName || "Анализ договора",
+        sourceFileName: payload.fileName || file.name,
+        sourceFileUrl: payload.fileUrl,
+        sourceFileSize: Number(payload.fileSize || file.size),
+        sourceMimeType: payload.mimeType || file.type || "application/octet-stream",
+        extractedText,
+        createdAt: new Date().toISOString(),
+        status: "draft",
+      };
+
+      const nextCases = [newCase, ...analysisCases];
+      setAnalysisCases(nextCases);
+      await persistAnalysisCases(nextCases);
+      setAnalysisActiveId(newCase.id);
+      setAnalysisActiveTab("ai");
+      setAnalysisTitle("");
+      setAnalysisUploadFile(null);
+      setAnalysisUploadFileKey((value) => value + 1);
+      setIsAnalysisUploadModalOpen(false);
+
+      void runRiskAnalysis(newCase.id);
+    } catch {
+      setAnalysisUploadError("Не удалось загрузить документ. Попробуйте еще раз.");
+    } finally {
+      setAnalysisUploadBusy(false);
+    }
+  }
+
+  function saveAnalysisProtocolDraft() {
+    if (!analysisActiveId) return;
+    setAnalysisCases((prev) =>
+      prev.map((item) =>
+        item.id === analysisActiveId
+          ? {
+              ...item,
+              protocolRows: analysisProtocolDraft
+                .map((row) => ({
+                  clause: row.clause.trim(),
+                  clientText: row.clientText.trim(),
+                  ourText: row.ourText.trim(),
+                }))
+                .filter((row) => row.clause || row.clientText || row.ourText),
+            }
+          : item,
+      ),
+    );
   }
 
   function archiveContractDraft(draftId: string) {
@@ -617,10 +1011,10 @@ export function AppShell() {
               </button>
             </div>
             <h1>{selectedClient.companyName}</h1>
-            <p>Карточка организации. Здесь создаем черновики договоров на основе шаблонов.</p>
+            <p>Карточка организации. Здесь создаем открытые дела на основе шаблонов.</p>
             <div className="header-actions">
               <button className="primary" onClick={openComposeModal} type="button">
-                Составить договор
+                Открыть дело
               </button>
             </div>
           </div>
@@ -634,10 +1028,10 @@ export function AppShell() {
 
           {contractsViewMode === "active" ? (
             <article className="card contracts-list-card">
-              <h3>Черновики договоров</h3>
+              <h3>Открытые дела</h3>
               {selectedClientActiveContracts.length === 0 ? (
                 <p className="muted-text">
-                  Черновиков пока нет. Нажмите &quot;Составить договор&quot; и выберите шаблон.
+                  Открытых дел пока нет. Нажмите &quot;Открыть дело&quot; и выберите шаблон.
                 </p>
               ) : (
                 <div className="draft-list">
@@ -645,7 +1039,7 @@ export function AppShell() {
                     <div className="draft-card" key={draft.id}>
                       <div className="draft-card__title">{draft.templateName}</div>
                       <div className="draft-card__meta">Создан: {formatDate(draft.createdAt)}</div>
-                      <div className="draft-card__meta">Статус: черновик</div>
+                      <div className="draft-card__meta">Статус: открытое дело</div>
                       <div className="draft-card__actions">
                         <Link className="ghost-btn ghost-btn--inline" href={`/contracts/${draft.id}`}>
                           Перейти в договор
@@ -697,12 +1091,12 @@ export function AppShell() {
           )}
 
           {isComposeModalOpen ? (
-            <div className="modal-root" role="dialog" aria-modal="true" aria-label="Составить договор">
+            <div className="modal-root" role="dialog" aria-modal="true" aria-label="Открыть дело">
               <div className="modal-backdrop" onClick={closeComposeModal} />
               <div className="modal-card">
-                <h3>Составить договор</h3>
+                <h3>Открыть дело</h3>
                 <form className="client-form" onSubmit={createContractDraft}>
-                  <label className="field">
+                  <div className="field">
                     <span>Договор по форме клиента (опционально)</span>
                     <div className="contract-upload">
                       <button
@@ -724,7 +1118,7 @@ export function AppShell() {
                         }}
                       />
                     </div>
-                  </label>
+                  </div>
 
                   {clientTemplateMeta ? (
                     <div className="template-attachment">
@@ -747,7 +1141,7 @@ export function AppShell() {
                   {clientTemplateError ? <p className="form-error">{clientTemplateError}</p> : null}
 
                   <label className="field">
-                    <span>Выберите шаблон договора *</span>
+                    <span>Выберите шаблон *</span>
                     <div className="template-dropdown" ref={templateDropdownRef}>
                       <button
                         className={`template-dropdown__trigger ${isTemplateDropdownOpen ? "open" : ""}`}
@@ -815,7 +1209,7 @@ export function AppShell() {
                       disabled={!clientTemplateMeta && availableTemplates.length === 0}
                       type="submit"
                     >
-                      Создать черновик
+                      Открыть дело
                     </button>
                   </div>
                 </form>
@@ -829,7 +1223,7 @@ export function AppShell() {
     return (
       <section className="workspace-stack">
         <div className="workspace-header">
-          <h1>Работа с договорами</h1>
+          <h1>Работа с контрагентами</h1>
           <p>
             Здесь хранятся организации-клиенты. Откройте карточку организации для работы с
             договорами.
@@ -905,8 +1299,8 @@ export function AppShell() {
                   <button className="ghost-btn" onClick={closeCreateModal} type="button">
                     Отмена
                   </button>
-                  <button className="primary" type="submit">
-                    Сохранить
+                  <button className="primary" disabled={createClientBusy} type="submit">
+                    {createClientBusy ? "Сохраняем..." : "Сохранить"}
                   </button>
                 </div>
               </form>
@@ -918,177 +1312,739 @@ export function AppShell() {
   }
 
   function renderKnowledgeSection() {
+    const templateDocs = knowledgeDocs.filter((doc) => doc.section === "templates");
+
     return (
-      <section className="workspace-stack">
+      <section className="workspace-stack analysis-workspace">
         <div className="workspace-header">
           <h1>База знаний</h1>
-          <p>Добавляйте документы по разделам. В каждом разделе сразу показывается список файлов.</p>
+          <p>
+            Здесь хранится библиотека шаблонов договоров. Для каждого шаблона можно указать название и
+            правила (контекст), которые будут учитываться при дальнейшей обработке.
+          </p>
           <p className="scope-text">
             Контур хранения: tenant <b>{knowledgeScope.tenantId}</b> / agent <b>{knowledgeScope.agentId}</b>
           </p>
+          <div className="header-actions">
+            <button className="primary" onClick={() => setIsTemplateUploadModalOpen(true)} type="button">
+              Добавить шаблон
+            </button>
+          </div>
         </div>
 
-        <div className="knowledge-accordion">
-          {knowledgeItems.map((item) => {
-            const sectionDocs = knowledgeDocs.filter((doc) => doc.section === item.id);
-
-            return (
-              <article className="knowledge-accordion-item" key={item.id}>
-                <button
-                  className={`knowledge-toggle ${openKnowledgeSection === item.id ? "active" : ""}`}
-                  onClick={() =>
-                    setOpenKnowledgeSection((prev) => (prev === item.id ? null : item.id))
-                  }
-                  type="button"
-                >
-                  <span className="knowledge-toggle__title">{item.title}</span>
-                  <span className="knowledge-toggle__icon">
-                    {openKnowledgeSection === item.id ? "−" : "+"}
-                  </span>
-                </button>
-
-                {openKnowledgeSection === item.id ? (
-                  <div className="knowledge-panel">
-                    <p className="muted-text">{item.subtitle}</p>
+        <article className="card">
+          <h3>Список шаблонов</h3>
+          {templateDocs.length === 0 ? (
+            <div className="knowledge-empty">
+              Шаблонов пока нет. Нажмите &quot;Добавить шаблон&quot;, чтобы загрузить первый документ.
+            </div>
+          ) : (
+            <div className="knowledge-doc-grid">
+              {templateDocs.map((doc) => (
+                <div className="knowledge-doc-card" key={doc.id}>
+                  <div className="knowledge-doc-card__head">
+                    <span className="knowledge-doc-card__name">{doc.fileName}</span>
                     <div className="knowledge-actions">
-                      <button className="primary" onClick={() => triggerFilePicker(item.id)} type="button">
-                        Добавить документ
+                      <button
+                        className="ghost-btn ghost-btn--inline"
+                        onClick={() => setTemplateDetailsId(doc.id)}
+                        type="button"
+                      >
+                        Подробнее
                       </button>
-                      <input
-                        className="hidden-file-input"
-                        multiple
-                        onChange={(event) => {
-                          void addKnowledgeFiles(item.id, event.target.files);
-                          event.currentTarget.value = "";
-                        }}
-                        ref={(node) => {
-                          fileInputsRef.current[item.id] = node;
-                        }}
-                        type="file"
-                      />
+                      {doc.fileUrl ? (
+                        <a
+                          className="ghost-btn ghost-btn--inline"
+                          href={doc.fileUrl}
+                          rel="noreferrer"
+                          target="_blank"
+                        >
+                          Открыть
+                        </a>
+                      ) : null}
+                      <button
+                        className="knowledge-doc-card__remove"
+                        onClick={() => removeKnowledgeDoc(doc.id)}
+                        type="button"
+                      >
+                        Удалить
+                      </button>
                     </div>
-                    {knowledgeUploadError ? <p className="form-error">{knowledgeUploadError}</p> : null}
+                  </div>
+                  <div className="knowledge-doc-card__meta">
+                    <span>{formatFileSize(doc.fileSize)}</span>
+                    <span>{formatDate(doc.uploadedAt)}</span>
+                    <span>{doc.mimeType}</span>
+                    {doc.originalFileName ? <span>Файл: {doc.originalFileName}</span> : null}
+                    {doc.sourceType ? <span>Тип: {doc.sourceType}</span> : null}
+                    {Array.isArray(doc.tags) && doc.tags.length > 0 ? <span>Теги: {doc.tags.join(", ")}</span> : null}
+                  </div>
+                  <div className="knowledge-doc-card__rules">
+                    {doc.rules?.trim()
+                      ? doc.rules.length > 180
+                        ? `${doc.rules.slice(0, 180)}…`
+                        : doc.rules
+                      : "Правила не указаны."}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </article>
 
-                    {sectionDocs.length === 0 ? (
-                      <div className="knowledge-empty">В этом разделе пока нет документов.</div>
+        {isTemplateUploadModalOpen ? (
+          <div
+            className="modal-root"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Добавить шаблон"
+          >
+            <div className="modal-backdrop" onClick={() => setIsTemplateUploadModalOpen(false)} />
+            <div className="modal-card">
+              <h3>Добавить шаблон</h3>
+              <p className="muted-text">
+                Загрузите документ и укажите человекочитаемое название. В поле &quot;Правила&quot; можно
+                зафиксировать акценты (оплата, сроки, штрафы, расторжение и т.д.).
+              </p>
+
+              <form className="client-form" onSubmit={(event) => void uploadTemplate(event)}>
+                <label className="field">
+                  <span>Файл шаблона *</span>
+                  <input
+                    key={templateUploadFileKey}
+                    onChange={(event) => setTemplateUploadFile(event.target.files?.[0] ?? null)}
+                    type="file"
+                  />
+                </label>
+
+                <label className="field">
+                  <span>Название шаблона *</span>
+                  <input
+                    autoFocus
+                    onChange={(event) => setTemplateUploadTitle(event.target.value)}
+                    placeholder="Например: Шаблон договора поставки"
+                    type="text"
+                    value={templateUploadTitle}
+                  />
+                </label>
+
+                <div className="workspace-grid">
+                  <label className="field" style={{ gridColumn: "span 6" }}>
+                    <span>Тип (опционально)</span>
+                    <input
+                      onChange={(event) => setTemplateUploadSourceType(event.target.value)}
+                      placeholder="template"
+                      type="text"
+                      value={templateUploadSourceType}
+                    />
+                  </label>
+                  <label className="field" style={{ gridColumn: "span 6" }}>
+                    <span>Теги (через запятую)</span>
+                    <input
+                      onChange={(event) => setTemplateUploadTags(event.target.value)}
+                      placeholder="поставка, оплата, штрафы"
+                      type="text"
+                      value={templateUploadTags}
+                    />
+                  </label>
+                </div>
+
+                <label className="field">
+                  <span>Правила (опционально)</span>
+                  <textarea
+                    onChange={(event) => setTemplateUploadRules(event.target.value)}
+                    placeholder="Например: при сравнении с шаблоном обращать внимание на оплату, сроки, штрафы и порядок расторжения."
+                    rows={6}
+                    value={templateUploadRules}
+                  />
+                </label>
+
+                {templateUploadError ? <p className="form-error">{templateUploadError}</p> : null}
+
+                <div className="modal-actions">
+                  <button
+                    className="ghost-btn"
+                    onClick={() => setIsTemplateUploadModalOpen(false)}
+                    type="button"
+                  >
+                    Отмена
+                  </button>
+                  <button className="primary" disabled={templateUploadBusy} type="submit">
+                    {templateUploadBusy ? "Загружаем..." : "Добавить шаблон"}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        ) : null}
+
+        {templateDetailsDoc ? (
+          <div
+            className="modal-root"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Шаблон"
+          >
+            <div className="modal-backdrop" onClick={closeTemplateDetails} />
+            <div className="modal-card">
+              {!templateDetailsEditing ? (
+                <>
+                  <h3>{templateDetailsDoc.fileName}</h3>
+                  <div className="knowledge-meta-list">
+                    <div className="knowledge-meta-item">
+                      <strong>Тип:</strong> {templateDetailsDoc.sourceType || "template"}
+                    </div>
+                    <div className="knowledge-meta-item">
+                      <strong>Теги:</strong>{" "}
+                      {Array.isArray(templateDetailsDoc.tags) && templateDetailsDoc.tags.length > 0
+                        ? templateDetailsDoc.tags.join(", ")
+                        : "—"}
+                    </div>
+                    <div className="knowledge-meta-item">
+                      <strong>Файл:</strong> {templateDetailsDoc.originalFileName || "—"}
+                    </div>
+                    <div className="knowledge-meta-item">
+                      <strong>Загружен:</strong> {formatDate(templateDetailsDoc.uploadedAt)}
+                    </div>
+                    <div className="knowledge-meta-item">
+                      <strong>Размер:</strong> {formatFileSize(templateDetailsDoc.fileSize)}
+                    </div>
+                    <div className="knowledge-meta-item">
+                      <strong>MIME:</strong> {templateDetailsDoc.mimeType}
+                    </div>
+                  </div>
+
+                  <h3 style={{ marginTop: 14 }}>Правила</h3>
+                  <div className="knowledge-doc-card__rules">
+                    {templateDetailsDoc.rules?.trim() ? templateDetailsDoc.rules : "Правила не указаны."}
+                  </div>
+
+                  <div className="modal-actions">
+                    <button className="ghost-btn" onClick={closeTemplateDetails} type="button">
+                      Закрыть
+                    </button>
+                    <button className="ghost-btn" onClick={startTemplateDetailsEdit} type="button">
+                      Редактировать
+                    </button>
+                    {templateDetailsDoc.fileUrl ? (
+                      <a
+                        className="primary"
+                        href={templateDetailsDoc.fileUrl}
+                        rel="noreferrer"
+                        target="_blank"
+                      >
+                        Открыть файл
+                      </a>
+                    ) : null}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <h3>Редактирование</h3>
+                  <form
+                    className="client-form"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      saveTemplateDetails();
+                    }}
+                  >
+                    <label className="field">
+                      <span>Название *</span>
+                      <input
+                        autoFocus
+                        onChange={(event) => setTemplateDetailsTitle(event.target.value)}
+                        type="text"
+                        value={templateDetailsTitle}
+                      />
+                    </label>
+
+                    <div className="workspace-grid">
+                      <label className="field" style={{ gridColumn: "span 6" }}>
+                        <span>Тип</span>
+                        <input
+                          onChange={(event) => setTemplateDetailsSourceType(event.target.value)}
+                          type="text"
+                          value={templateDetailsSourceType}
+                        />
+                      </label>
+                      <label className="field" style={{ gridColumn: "span 6" }}>
+                        <span>Теги (через запятую)</span>
+                        <input
+                          onChange={(event) => setTemplateDetailsTags(event.target.value)}
+                          type="text"
+                          value={templateDetailsTags}
+                        />
+                      </label>
+                    </div>
+
+                    <label className="field">
+                      <span>Правила</span>
+                      <textarea
+                        onChange={(event) => setTemplateDetailsRules(event.target.value)}
+                        rows={8}
+                        value={templateDetailsRules}
+                      />
+                    </label>
+
+                    {templateDetailsError ? <p className="form-error">{templateDetailsError}</p> : null}
+
+                    <div className="modal-actions">
+                      <button className="ghost-btn" onClick={cancelTemplateDetailsEdit} type="button">
+                        Отмена
+                      </button>
+                      <button className="primary" type="submit">
+                        Сохранить
+                      </button>
+                    </div>
+                  </form>
+                </>
+              )}
+            </div>
+          </div>
+        ) : null}
+      </section>
+    );
+  }
+
+  function renderAnalysisSection() {
+    const active =
+      analysisActiveId ? analysisCases.find((item) => item.id === analysisActiveId) ?? null : null;
+
+    const comments = Array.isArray(active?.aiComments) ? active!.aiComments! : [];
+
+    const canAnalyze = Boolean(analysisUploadFile) && !analysisUploadBusy;
+
+    return (
+      <section className="workspace-stack workspace-stack--scroll">
+        <div className="workspace-header">
+          <h1>Анализ рисков</h1>
+          <p>
+            Загрузите документ контрагента. Отправим его на платформу и получим: комментарии по рискам и заготовку
+            протокола разногласий (наша редакция предложений).
+          </p>
+          <div className="header-actions">
+            <button className="primary" type="button" onClick={() => setIsAnalysisUploadModalOpen(true)}>
+              Новый анализ
+            </button>
+          </div>
+        </div>
+
+        <div className="analysis-grid">
+          <aside className="analysis-left">
+            <article className="card analysis-list-card">
+              <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10 }}>
+                <h3 style={{ margin: 0 }}>История</h3>
+                {analysisCases.length > 0 ? (
+                  <button className="ghost-btn ghost-btn--inline" type="button" onClick={clearAnalysisHistory}>
+                    Очистить
+                  </button>
+                ) : null}
+              </div>
+              {analysisCases.length === 0 ? (
+                <p className="muted-text">Пока нет анализов. Загрузите первый документ.</p>
+              ) : (
+                <div className="analysis-list">
+                  {analysisCases.map((item) => (
+                    <div
+                      key={item.id}
+                      className={`analysis-item ${analysisActiveId === item.id ? "active" : ""}`}
+                      onClick={() => openAnalysisCase(item.id)}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          openAnalysisCase(item.id);
+                        }
+                      }}
+                    >
+                      <span style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start" }}>
+                        <span className="analysis-item__title">{item.title}</span>
+                        <button
+                          className="ghost-btn ghost-btn--inline"
+                          type="button"
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            deleteAnalysisCase(item.id);
+                          }}
+                          aria-label="Удалить анализ"
+                          title="Удалить"
+                        >
+                          ×
+                        </button>
+                      </span>
+                      <div className="analysis-item__meta">{formatDate(item.createdAt)}</div>
+                      <div className="analysis-item__meta muted-text">{item.sourceFileName}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </article>
+          </aside>
+
+          <section className="analysis-main">
+            <article className="card analysis-panel">
+              <div className="analysis-head">
+                <div>
+                  <h3>{active ? active.title : "Результат анализа"}</h3>
+                  {active ? (
+                    <div className="analysis-head__meta">
+                      <span className="muted-text">
+                        Файл: <b>{active.sourceFileName}</b> ({formatFileSize(active.sourceFileSize)}) •{" "}
+                        {formatDate(active.createdAt)}
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="analysis-head__meta">
+                      <span className="muted-text">
+                        Выберите анализ из истории или загрузите документ, чтобы увидеть комментарии и протокол.
+                      </span>
+                    </div>
+                  )}
+                </div>
+                <div className="analysis-head__actions">
+                  {active ? (
+                    <>
+                      <a
+                        className="ghost-btn ghost-btn--inline"
+                        href={active.sourceFileUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Открыть документ
+                      </a>
+                      <button
+                        className="ghost-btn ghost-btn--inline"
+                        type="button"
+                        disabled={analysisRunBusy}
+                        onClick={() => void runRiskAnalysis(active.id)}
+                      >
+                        {analysisRunBusy ? "Отправляем..." : "Запустить ещё раз"}
+                      </button>
+                      <button
+                        className="ghost-btn ghost-btn--inline"
+                        type="button"
+                        onClick={() => setIsAnalysisUploadModalOpen(true)}
+                      >
+                        Новый анализ
+                      </button>
+                    </>
+                  ) : null}
+                </div>
+              </div>
+
+              {analysisRunError ? <p className="form-error" style={{ marginTop: 10 }}>{analysisRunError}</p> : null}
+              {analysisRunBusy ? (
+                <div className="contract-ai-processing" style={{ marginTop: 10 }}>
+                  <div className="contract-ai-processing__spinner" aria-hidden="true" />
+                  <div className="contract-ai-processing__text">
+                    <strong>Идёт обработка на платформе</strong>
+                    <span>
+                      Ждём ответ
+                      <span className="contract-ai-processing__dots" aria-hidden="true">
+                        <span />
+                        <span />
+                        <span />
+                      </span>
+                    </span>
+                  </div>
+                  <span className="muted-text" style={{ fontSize: 12 }}>
+                    до 3 минут
+                  </span>
+                </div>
+              ) : null}
+
+              <div className="analysis-tabs">
+                <button
+                  className={`analysis-tab ${analysisActiveTab === "ai" ? "active" : ""}`}
+                  type="button"
+                  onClick={() => setAnalysisActiveTab("ai")}
+                  disabled={!active}
+                >
+                  Комментарий
+                </button>
+                <button
+                  className={`analysis-tab ${analysisActiveTab === "protocol" ? "active" : ""}`}
+                  type="button"
+                  onClick={() => setAnalysisActiveTab("protocol")}
+                  disabled={!active}
+                >
+                  Протокол
+                </button>
+                <button
+                  className={`analysis-tab ${analysisActiveTab === "text" ? "active" : ""}`}
+                  type="button"
+                  onClick={() => setAnalysisActiveTab("text")}
+                  disabled={!active}
+                >
+                  Текст
+                </button>
+              </div>
+
+              <div className="analysis-panel__body">
+                {!active ? (
+                  <p className="muted-text">
+                    Здесь появится результат: общий комментарий по рискам, таблица протокола разногласий и извлечённый
+                    текст документа.
+                  </p>
+                ) : analysisActiveTab === "protocol" ? (
+                  <>
+                    <p className="muted-text">
+                      Таблица протокола разногласий (можно править). Пока перенос в “Открытое дело” — позже.
+                    </p>
+
+                    {analysisProtocolDraft.length === 0 ? (
+                      <p className="muted-text">Пока нет строк протокола.</p>
                     ) : (
-                      <div className="knowledge-doc-grid">
-                        {sectionDocs.map((doc) => (
-                          <div className="knowledge-doc-card" key={doc.id}>
-                            <div className="knowledge-doc-card__head">
-                              <span className="knowledge-doc-card__name">{doc.fileName}</span>
-                              <button
-                                className="knowledge-doc-card__remove"
-                                onClick={() => removeKnowledgeDoc(doc.id)}
-                                type="button"
-                              >
-                                Удалить
-                              </button>
-                            </div>
-                            <div className="knowledge-doc-card__meta">
-                              <span>{formatFileSize(doc.fileSize)}</span>
-                              <span>{formatDate(doc.uploadedAt)}</span>
-                              <span>{doc.mimeType}</span>
-                            </div>
+                      <div className="analysis-protocol-table">
+                        <div className="analysis-protocol-row analysis-protocol-row--head">
+                          <div>Пункт</div>
+                          <div>Редакция контрагента</div>
+                          <div>Наша редакция</div>
+                        </div>
+                        {analysisProtocolDraft.map((row, index) => (
+                          <div className="analysis-protocol-row" key={`${row.clause}-${index}`}>
+                            <input
+                              value={row.clause}
+                              onChange={(e) =>
+                                setAnalysisProtocolDraft((prev) =>
+                                  prev.map((item, idx) =>
+                                    idx === index ? { ...item, clause: e.target.value } : item,
+                                  ),
+                                )
+                              }
+                            />
+                            <textarea
+                              rows={3}
+                              value={row.clientText}
+                              onChange={(e) =>
+                                setAnalysisProtocolDraft((prev) =>
+                                  prev.map((item, idx) =>
+                                    idx === index ? { ...item, clientText: e.target.value } : item,
+                                  ),
+                                )
+                              }
+                            />
+                            <textarea
+                              rows={3}
+                              value={row.ourText}
+                              onChange={(e) =>
+                                setAnalysisProtocolDraft((prev) =>
+                                  prev.map((item, idx) =>
+                                    idx === index ? { ...item, ourText: e.target.value } : item,
+                                  ),
+                                )
+                              }
+                            />
                           </div>
                         ))}
                       </div>
                     )}
+
+                    <div className="analysis-protocol-actions">
+                      <button
+                        className="ghost-btn"
+                        type="button"
+                        onClick={() =>
+                          setAnalysisProtocolDraft((prev) => [
+                            ...prev,
+                            { clause: "", clientText: "", ourText: "" },
+                          ])
+                        }
+                      >
+                        Добавить строку
+                      </button>
+                      <button className="ghost-btn" type="button" onClick={saveAnalysisProtocolDraft}>
+                        Сохранить строки
+                      </button>
+                      <button className="primary" disabled type="button">
+                        Добавить в протокол разногласий (скоро)
+                      </button>
+                    </div>
+                  </>
+                ) : analysisActiveTab === "text" ? (
+                  <>
+                    <p className="muted-text">
+                      Для прозрачности: что именно попадёт в анализ. Показываем извлечённый текст (если удалось).
+                    </p>
+                    <pre className="analysis-text">
+                      {active.extractedText?.trim() ? active.extractedText : "Текст не извлечён."}
+                    </pre>
+                  </>
+                ) : (
+                  <>
+                    <p className="muted-text">
+                      Здесь будет общий вывод и список рисков (позже — на базе ФЗ/практики из платформы). Сейчас — мок.
+                    </p>
+                    {active.aiSummary ? <p className="analysis-summary">{active.aiSummary}</p> : null}
+                    {comments.length === 0 ? (
+                      <p className="muted-text">Пока нет комментариев.</p>
+                    ) : (
+                      <div className="analysis-comments">
+                        {comments.map((c) => (
+                          <div key={c.id} className={`analysis-comment ${severityClass(c.severity)}`}>
+                            <div className="analysis-comment__head">
+                              <strong>{c.title}</strong>
+                              <span className="muted-text">{severityLabel(c.severity)}</span>
+                            </div>
+                            <p>{c.details}</p>
+                            {c.basis ? <p className="muted-text">Основание: {c.basis}</p> : null}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            </article>
+          </section>
+        </div>
+
+        {isAnalysisUploadModalOpen ? (
+          <div className="modal-root" role="dialog" aria-modal="true" aria-label="Новый анализ">
+            <div
+              className="modal-backdrop"
+              onClick={() => {
+                setIsAnalysisUploadModalOpen(false);
+                setAnalysisUploadError(null);
+                setAnalysisTitle("");
+                setAnalysisUploadFile(null);
+                setAnalysisUploadFileKey((value) => value + 1);
+              }}
+            />
+            <div className="modal-card">
+              <h3>Новый анализ</h3>
+              <p className="muted-text">
+                Загрузите документ контрагента. Пока без реальной обработки ИИ — только интерфейс и мок результата.
+              </p>
+
+              <form className="client-form" onSubmit={(event) => void uploadAnalysisDocument(event)}>
+                <label className="field">
+                  <span>Документ контрагента *</span>
+                  <input
+                    key={analysisUploadFileKey}
+                    onChange={(event) => setAnalysisUploadFile(event.target.files?.[0] ?? null)}
+                    type="file"
+                  />
+                </label>
+
+                <label className="field">
+                  <span>Название (опционально)</span>
+                  <input
+                    onChange={(event) => setAnalysisTitle(event.target.value)}
+                    placeholder="Например: Договор поставки — Контрагент X"
+                    type="text"
+                    value={analysisTitle}
+                  />
+                </label>
+
+                {analysisUploadError ? <p className="form-error">{analysisUploadError}</p> : null}
+
+                <div className="modal-actions">
+                  <button
+                    className="ghost-btn"
+                    onClick={() => {
+                      setIsAnalysisUploadModalOpen(false);
+                      setAnalysisUploadError(null);
+                      setAnalysisTitle("");
+                      setAnalysisUploadFile(null);
+                      setAnalysisUploadFileKey((value) => value + 1);
+                    }}
+                    type="button"
+                  >
+                    Отмена
+                  </button>
+                  <button className="primary" disabled={!canAnalyze} type="submit">
+                    {analysisUploadBusy ? "Обрабатываем..." : "Запустить анализ"}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        ) : null}
+      </section>
+    );
+  }
+
+  function renderDashboardSection() {
+    const templatesCount = knowledgeDocs.filter((doc) => doc.section === "templates").length;
+    const activeContracts = contracts.filter((item) => item.status === "draft");
+    const archivedContracts = contracts.filter((item) => item.status === "archived");
+    const finalizedContracts = contracts.filter((item) => item.status === "finalized");
+
+    const recentContracts = [...contracts]
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .slice(0, 6);
+
+    const maxBar = Math.max(activeContracts.length, archivedContracts.length, finalizedContracts.length, 1);
+
+    return (
+      <section className="workspace-stack workspace-stack--scroll">
+        <div className="workspace-header">
+          <h1>Дашборд</h1>
+          <p>Быстрый обзор и навигация по работе: контрагенты, договоры и шаблоны.</p>
+        </div>
+
+        <div className="dashboard-grid">
+          <article className="card dashboard-stat">
+            <div className="dashboard-stat__label">Контрагенты</div>
+            <div className="dashboard-stat__value">{clients.length}</div>
+            <div className="dashboard-stat__hint">Всего организаций в работе.</div>
+          </article>
+          <article className="card dashboard-stat">
+            <div className="dashboard-stat__label">Шаблоны</div>
+            <div className="dashboard-stat__value">{templatesCount}</div>
+            <div className="dashboard-stat__hint">Шаблоны договоров в базе знаний.</div>
+          </article>
+          <article className="card dashboard-stat">
+            <div className="dashboard-stat__label">Открытые дела</div>
+            <div className="dashboard-stat__value">{activeContracts.length}</div>
+            <div className="dashboard-stat__hint">Договоры в согласовании.</div>
+          </article>
+
+          <article className="card dashboard-chart">
+            <h3>Статусы договоров</h3>
+            <div className="dashboard-bars">
+              {[
+                { label: "Открытые дела", value: activeContracts.length, className: "ok" },
+                { label: "Архив", value: archivedContracts.length, className: "warn" },
+                { label: "Завершены", value: finalizedContracts.length, className: "accent" },
+              ].map((item) => (
+                <div key={item.label} className="dashboard-bar">
+                  <div className="dashboard-bar__head">
+                    <span>{item.label}</span>
+                    <span className="muted-text">{item.value}</span>
                   </div>
-                ) : null}
-              </article>
-            );
-          })}
+                  <div className="dashboard-bar__track">
+                    <div
+                      className={`dashboard-bar__fill dashboard-bar__fill--${item.className}`}
+                      style={{ width: `${Math.round((item.value / maxBar) * 100)}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </article>
+
+          <article className="card dashboard-recent">
+            <h3>Последние договоры</h3>
+            {recentContracts.length === 0 ? (
+              <p className="muted-text">Пока нет договоров. Откройте первое дело у контрагента.</p>
+            ) : (
+              <div className="dashboard-recent__list">
+                {recentContracts.map((c) => (
+                  <Link key={c.id} className="dashboard-recent__item" href={`/contracts/${c.id}`}>
+                    <div className="dashboard-recent__title">{c.templateName}</div>
+                    <div className="dashboard-recent__meta">
+                      {formatDate(c.createdAt)} • {c.status === "draft" ? "открытое дело" : c.status === "archived" ? "архив" : "завершен"}
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </article>
         </div>
-      </section>
-    );
-  }
-
-  function renderProfileSection() {
-    return (
-      <section className="workspace-stack">
-        <div className="workspace-header">
-          <h1>Профиль</h1>
-          <p>Раздел для данных компании. Интеграции Google перенесены в Настройки.</p>
-        </div>
-
-        <article className="card profile-card">
-          <div className="profile-card__head">
-            <h3>Данные компании (автоподстановка)</h3>
-            <span className="integration-status warn">Скоро</span>
-          </div>
-          <p className="muted-text">
-            Место под реквизиты и подписантов. На следующем этапе подключим автозаполнение
-            договоров из этих данных.
-          </p>
-          <div className="profile-grid profile-grid--disabled">
-            <label className="field">
-              <span>Юр. лицо</span>
-              <input disabled placeholder="ООО Компания" type="text" />
-            </label>
-            <label className="field">
-              <span>ИНН / КПП</span>
-              <input disabled placeholder="0000000000 / 000000000" type="text" />
-            </label>
-            <label className="field">
-              <span>ОГРН</span>
-              <input disabled placeholder="0000000000000" type="text" />
-            </label>
-            <label className="field">
-              <span>Подписант</span>
-              <input disabled placeholder="Иванов И.И., Генеральный директор" type="text" />
-            </label>
-          </div>
-        </article>
-      </section>
-    );
-  }
-
-  function renderSettingsSection() {
-    return (
-      <section className="workspace-stack">
-        <div className="workspace-header">
-          <h1>Настройки</h1>
-          <p>Интеграции с Google сервисами будут доступны в одном из следующих обновлений.</p>
-        </div>
-
-        <article className="card profile-card">
-          <div className="profile-card__head">
-            <h3>Google Docs</h3>
-            <span className="integration-status warn">Скоро</span>
-          </div>
-
-          <label className="toggle-row toggle-row--disabled">
-            <input checked={false} disabled type="checkbox" />
-            <span>Включить (скоро)</span>
-          </label>
-
-          <div className="integration-hidden" />
-
-          <p className="integration-help">
-            Интеграция Google Docs готовится к запуску. Настройка и включение станут доступны в
-            следующем обновлении.
-          </p>
-        </article>
-
-        <article className="card profile-card">
-          <div className="profile-card__head">
-            <h3>Gmail</h3>
-            <span className="integration-status warn">Скоро</span>
-          </div>
-
-          <label className="toggle-row toggle-row--disabled">
-            <input checked={false} disabled type="checkbox" />
-            <span>Включить (скоро)</span>
-          </label>
-
-          <div className="integration-hidden" />
-
-          <p className="integration-help">
-            Интеграция Gmail готовится к запуску. Настройка и включение станут доступны в следующем
-            обновлении.
-          </p>
-        </article>
       </section>
     );
   }
@@ -1138,10 +2094,10 @@ export function AppShell() {
       </aside>
 
       <main className="workspace">
+        {activeSection === "dashboard" ? renderDashboardSection() : null}
         {activeSection === "contracts" ? renderContractsSection() : null}
-        {activeSection === "profile" ? renderProfileSection() : null}
+        {activeSection === "analysis" ? renderAnalysisSection() : null}
         {activeSection === "knowledge" ? renderKnowledgeSection() : null}
-        {activeSection === "settings" ? renderSettingsSection() : null}
       </main>
     </div>
   );

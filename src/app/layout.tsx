@@ -1,17 +1,5 @@
-﻿import type { Metadata } from "next";
-import { Manrope, IBM_Plex_Mono } from "next/font/google";
+import type { Metadata } from "next";
 import "./globals.css";
-
-const manrope = Manrope({
-  variable: "--font-display",
-  subsets: ["latin", "cyrillic"],
-});
-
-const ibmPlexMono = IBM_Plex_Mono({
-  variable: "--font-mono",
-  subsets: ["latin", "cyrillic"],
-  weight: ["400", "500"],
-});
 
 export const metadata: Metadata = {
   title: "Jurist3 Workspace",
@@ -25,7 +13,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ru">
-      <body className={`${manrope.variable} ${ibmPlexMono.variable}`}>{children}</body>
+      <body>{children}</body>
     </html>
   );
 }

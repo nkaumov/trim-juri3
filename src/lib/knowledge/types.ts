@@ -1,4 +1,4 @@
-export type KnowledgeSection = "templates" | "rules" | "fz";
+export type KnowledgeSection = "templates";
 
 export type TemplateRoleMeta = {
   ourRole?: string;
@@ -13,6 +13,10 @@ export type KnowledgeDocument = {
   agentId: string;
   section: KnowledgeSection;
   fileName: string;
+  originalFileName?: string;
+  sourceType?: string;
+  tags?: string[];
+  rules?: string;
   fileUrl?: string;
   fileSize: number;
   mimeType: string;

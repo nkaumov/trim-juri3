@@ -1,66 +1,107 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useParams } from "next/navigation";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import type {
-  ContractDraft,
-  ProtocolColumnTitles,
-  ProtocolInputMode,
-  ProtocolRow,
-} from "@/lib/contracts/types";
-import { OnlyOfficeViewer } from "@/components/contracts/OnlyOfficeViewer";
-import { t } from "@/i18n";
-import type { Locale } from "@/i18n/types";
+import { useParams } from "next/navigation";
+import type { ContractDraft, ContractPlatformState, ProtocolComment, ProtocolRow } from "@/lib/contracts/types";
 import type { KnowledgeDocument } from "@/lib/knowledge/types";
 import { usePublicConfig } from "@/lib/usePublicConfig";
 
-const tabOptions = [
-  { id: "template", labelKey: "workspace.contract.tab.template" },
-  { id: "protocol", labelKey: "workspace.contract.tab.protocol" },
-  { id: "final", labelKey: "workspace.contract.tab.final" },
-] as const;
+type MainTab = "protocol" | "comments" | "template";
+type InputKind = "text" | "file";
 
-type TabId = (typeof tabOptions)[number]["id"];
-type AiPanelSection = "review" | "request" | "context";
-
-const aiModeOptions = [
-  { id: "client-points" as ProtocolInputMode, labelKey: "workspace.contract.branch.points.title", descKey: "workspace.contract.branch.points.desc", inputKind: "text" as const },
-  { id: "client-freeform" as ProtocolInputMode, labelKey: "workspace.contract.branch.freeform.title", descKey: "workspace.contract.branch.freeform.desc", inputKind: "text" as const },
-  { id: "client-protocol" as ProtocolInputMode, labelKey: "workspace.contract.branch.clientProtocol.title", descKey: "workspace.contract.branch.clientProtocol.desc", inputKind: "file" as const },
-  { id: "edited-template" as ProtocolInputMode, labelKey: "workspace.contract.branch.editedTemplate.title", descKey: "workspace.contract.branch.editedTemplate.desc", inputKind: "file" as const },
-  { id: "commented-template" as ProtocolInputMode, labelKey: "workspace.contract.branch.commentedTemplate.title", descKey: "workspace.contract.branch.commentedTemplate.desc", inputKind: "file" as const },
-  { id: "protocol-sync" as ProtocolInputMode, labelKey: "workspace.contract.branch.protocolSync.title", descKey: "workspace.contract.branch.protocolSync.desc", inputKind: "file" as const },
-] as const;
-
-function getAiSectionLabel(id: AiPanelSection): string {
-  if (id === "request") return "Запрос";
-  if (id === "review") return "Комментарии";
-  return "Контекст";
+function formatDate(value: string): string {
+  return new Date(value).toLocaleString("ru-RU", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
-function getLocale(): Locale {
-  return "ru";
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 }
 
-function getDefaultProtocolColumnTitles(locale: Locale): ProtocolColumnTitles {
-  return {
-    client: t(locale, "workspace.contract.protocol.table.client"),
-    our: t(locale, "workspace.contract.protocol.table.our"),
-    agreed: t(locale, "workspace.contract.protocol.table.agreed"),
-  };
+function severityBadge(value: ProtocolComment["severity"]): string {
+  if (value === "critical") return "критично";
+  if (value === "moderate") return "средне";
+  return "низко";
 }
 
-function getModeLabelKey(mode: ProtocolInputMode): `workspace.${string}` {
-  switch (mode) {
-    case "client-freeform": return "workspace.contract.branch.freeform.title";
-    case "client-points": return "workspace.contract.branch.points.title";
-    case "client-protocol": return "workspace.contract.branch.clientProtocol.title";
-    case "edited-template": return "workspace.contract.branch.editedTemplate.title";
-    case "commented-template": return "workspace.contract.branch.commentedTemplate.title";
-    case "protocol-sync": return "workspace.contract.branch.protocolSync.title";
-    default: return "workspace.contract.branch.points.title";
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+}
+
+function asString(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function asArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+type PlatformOutputProtocolRow = {
+  clause?: unknown;
+  client_text?: unknown;
+  clientText?: unknown;
+  our_text?: unknown;
+  ourText?: unknown;
+};
+
+type PlatformOutputItem = {
+  id?: unknown;
+  clause?: unknown;
+  severity?: unknown;
+  was?: unknown;
+  now?: unknown;
+  comment?: unknown;
+  aiComment?: unknown;
+  basis?: unknown;
+  guidance?: unknown;
+};
+
+function mapOutputToRows(output: Record<string, unknown>): ProtocolRow[] {
+  const rows = asArray(output["protocol_rows"]) as unknown[];
+  const mapped: ProtocolRow[] = [];
+  for (const raw of rows) {
+    if (!raw || typeof raw !== "object") continue;
+    const row = raw as PlatformOutputProtocolRow;
+    const clause = asString(row.clause).trim() || "\u2014";
+    const clientText = asString(row.client_text ?? row.clientText).trim();
+    const ourText = asString(row.our_text ?? row.ourText).trim();
+    if (!clientText && !ourText) continue;
+    mapped.push({ clause, clientText, ourText });
   }
+  return mapped;
+}
+
+function mapOutputToComments(output: Record<string, unknown>): ProtocolComment[] {
+  const items = asArray(output["items"]) as unknown[];
+  const mapped: ProtocolComment[] = [];
+  for (const raw of items) {
+    if (!raw || typeof raw !== "object") continue;
+    const item = raw as PlatformOutputItem;
+    const severityRaw = asString(item.severity).trim();
+    const severity: ProtocolComment["severity"] =
+      severityRaw === "critical" || severityRaw === "moderate" || severityRaw === "minor"
+        ? (severityRaw as ProtocolComment["severity"])
+        : "moderate";
+
+    mapped.push({
+      id: asString(item.id).trim() || crypto.randomUUID(),
+      clause: asString(item.clause).trim() || "\u2014",
+      was: asString(item.was),
+      now: asString(item.now),
+      severity,
+      comment: asString(item.comment ?? item.aiComment).trim() || "Комментарий не указан.",
+      guidance: asString(item.basis ?? item.guidance).trim() || undefined,
+    });
+  }
+  return mapped;
 }
 
 export function ContractWorkspace() {
@@ -70,47 +111,45 @@ export function ContractWorkspace() {
 
   const params = useParams();
   const contractId = typeof params?.contractId === "string" ? params.contractId : "";
-  const locale = getLocale();
-  
-  const [activeTab, setActiveTab] = useState<TabId>("template");
-  const [showFinalize, setShowFinalize] = useState(false);
-  const [finalizeBusy, setFinalizeBusy] = useState(false);
-  const [finalizeError, setFinalizeError] = useState<string | null>(null);
-  const [inputMode, setInputMode] = useState<ProtocolInputMode>("client-points");
-  const [message, setMessage] = useState("");
-  const [pendingFile, setPendingFile] = useState<File | null>(null);
+
   const [contract, setContract] = useState<ContractDraft | null>(null);
   const [knowledgeDocs, setKnowledgeDocs] = useState<KnowledgeDocument[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
-  // const [templateCheck, setTemplateCheck] = useState<string | null>(null);
-  const [aiSubmitting, setAiSubmitting] = useState(false);
-  const [aiError, setAiError] = useState<string | null>(null);
-  const [aiNotice, setAiNotice] = useState<string | null>(null);
-  const [activeAiSection, setActiveAiSection] = useState<AiPanelSection>("request");
-  
-  const chatFileRef = useRef<HTMLInputElement | null>(null);
-  const aiSectionScrollRef = useRef<HTMLDivElement | null>(null);
-  
-  const [protocolRowsState, setProtocolRowsState] = useState<ProtocolRow[]>([]);
-  const [editCell, setEditCell] = useState<{ row: number; field: keyof ProtocolRow } | null>(null);
-  const [editValue, setEditValue] = useState("");
-  const [protocolEditError, setProtocolEditError] = useState<string | null>(null);
-  const [protocolEditSaving, setProtocolEditSaving] = useState(false);
-  const [columnTitlesEditing, setColumnTitlesEditing] = useState(false);
-  const [columnTitlesSaving, setColumnTitlesSaving] = useState(false);
-  const [columnTitlesError, setColumnTitlesError] = useState<string | null>(null);
-  const [columnTitlesDraft, setColumnTitlesDraft] = useState<ProtocolColumnTitles>(
-    getDefaultProtocolColumnTitles(locale),
+
+  const states = useMemo(
+    () => (Array.isArray(contract?.platformStates) ? contract!.platformStates! : []),
+    [contract?.platformStates],
   );
 
-  const isFinalTab = activeTab === "final";
-  const currentMode = aiModeOptions.find((item) => item.id === inputMode) ?? aiModeOptions[0];
-  const modeNeedsText = currentMode.inputKind === "text";
-  const modeNeedsFile = currentMode.inputKind === "file";
+  const [activeStateId, setActiveStateId] = useState<string | null>(null);
+  const [mainTab, setMainTab] = useState<MainTab>("protocol");
+
+  const [protocolDraft, setProtocolDraft] = useState<Array<{ clause: string; clientText: string; ourText: string }>>(
+    [],
+  );
+  const [protocolSaveBusy, setProtocolSaveBusy] = useState(false);
+  const [protocolSaveError, setProtocolSaveError] = useState<string | null>(null);
+
+  const [templateBusy, setTemplateBusy] = useState(false);
+  const [templateError, setTemplateError] = useState<string | null>(null);
+  const [templateText, setTemplateText] = useState<string | null>(null);
+  const [templateRules, setTemplateRules] = useState<string | null>(null);
+
+  const [isInputModalOpen, setIsInputModalOpen] = useState(false);
+  const [inputKind, setInputKind] = useState<InputKind>("text");
+  const [inputText, setInputText] = useState("");
+  const [inputFile, setInputFile] = useState<File | null>(null);
+  const [inputFileKey, setInputFileKey] = useState(0);
+  const [sendBusy, setSendBusy] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+
+  const [showFinalize, setShowFinalize] = useState(false);
+  const [finalizeBusy, setFinalizeBusy] = useState(false);
+  const [finalizeError, setFinalizeError] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
-    const headers = { "x-tenant-id": tenantId, "x-agent-id": agentId };
     if (!contractId) return;
+    const headers = { "x-tenant-id": tenantId, "x-agent-id": agentId };
     setLoadError(null);
     try {
       const [contractsRes, knowledgeRes] = await Promise.all([
@@ -121,493 +160,552 @@ export function ContractWorkspace() {
         window.location.href = "/login";
         return;
       }
-      if (!contractsRes.ok) {
-        setLoadError(t(locale, "workspace.contract.error.load"));
-        return;
-      }
       const payload = (await contractsRes.json().catch(() => null)) as { items?: ContractDraft[] } | null;
       const knowledgePayload = (await knowledgeRes.json().catch(() => null)) as { items?: KnowledgeDocument[] } | null;
       const match = payload?.items?.find((item) => item.id === contractId) ?? null;
-      setContract(match ?? null);
+      setContract(match);
       if (Array.isArray(knowledgePayload?.items)) setKnowledgeDocs(knowledgePayload.items);
-    } catch {
-      setLoadError(t(locale, "workspace.contract.error.load"));
-    }
-  }, [agentId, contractId, locale, tenantId]);
 
-  useEffect(() => { void loadData(); }, [loadData]);
-  useEffect(() => { setProtocolRowsState(Array.isArray(contract?.protocolRows) ? contract.protocolRows : []); }, [contract?.protocolRows]);
+      const states = Array.isArray(match?.platformStates) ? match!.platformStates! : [];
+      if (!activeStateId && states.length > 0) {
+        setActiveStateId(states[0].id);
+      }
+    } catch {
+      setLoadError("Не удалось загрузить данные дела.");
+    }
+  }, [activeStateId, agentId, contractId, tenantId]);
+
   useEffect(() => {
-    const defaults = getDefaultProtocolColumnTitles(locale);
-    const fromContract = contract?.protocolColumnTitles;
-    if (!fromContract) {
-      setColumnTitlesDraft(defaults);
+    void loadData();
+  }, [loadData]);
+
+  const activeState = useMemo(
+    () => (activeStateId ? states.find((s) => s.id === activeStateId) ?? null : null),
+    [activeStateId, states],
+  );
+
+  useEffect(() => {
+    if (!activeState) {
+      setProtocolDraft([]);
       return;
     }
-    setColumnTitlesDraft({
-      client: String(fromContract.client || defaults.client),
-      our: String(fromContract.our || defaults.our),
-      agreed: String(fromContract.agreed || defaults.agreed),
-    });
-  }, [contract?.protocolColumnTitles, locale]);
-  useEffect(() => {
-    setAiError(null); setAiNotice(null);
-    if (modeNeedsText) setPendingFile(null);
-    else setMessage("");
-  }, [inputMode, modeNeedsText]);
+    const rows = Array.isArray(activeState.protocolRows) ? activeState.protocolRows : [];
+    setProtocolDraft(
+      rows.map((r) => ({
+        clause: String(r.clause || ""),
+        clientText: String(r.clientText || ""),
+        ourText: String(r.ourText || ""),
+      })),
+    );
+    setProtocolSaveError(null);
+  }, [activeState]);
 
   const templateDocs = knowledgeDocs.filter((doc) => doc.section === "templates" && doc.fileUrl);
   const fallbackTemplate = knowledgeDocs.find((doc) => doc.id === contract?.templateDocId);
-  const fallbackByName = !fallbackTemplate && contract?.templateName ? knowledgeDocs.find((doc) => doc.fileName === contract.templateName) : null;
+  const fallbackByName =
+    !fallbackTemplate && contract?.templateName
+      ? knowledgeDocs.find((doc) => doc.fileName === contract.templateName)
+      : null;
   const fallbackSingle = !fallbackTemplate && !fallbackByName && templateDocs.length === 1 ? templateDocs[0] : null;
   const directTemplateUrl = contract?.templateDocId ? `/api/knowledge/files/${contract.templateDocId}` : "";
-  const templateFileUrl = contract?.templateFileUrl ?? fallbackTemplate?.fileUrl ?? fallbackByName?.fileUrl ?? fallbackSingle?.fileUrl ?? directTemplateUrl;
-  const templateFileName = contract?.templateName ?? fallbackTemplate?.fileName ?? fallbackByName?.fileName ?? fallbackSingle?.fileName ?? undefined;
-  const protocolFileUrl = contract?.protocolFileUrl ?? "";
-  const protocolFileName = contract?.protocolFileName ?? undefined;
-  const finalFileUrl = contract?.finalFileUrl ?? "";
-  const finalFileName = contract?.finalFileName ?? undefined;
-  const protocolComments = Array.isArray(contract?.protocolComments) ? contract.protocolComments : [];
-  const protocolRequests = Array.isArray(contract?.protocolRequests) ? [...contract.protocolRequests].reverse() : [];
-  const prevAiSection: AiPanelSection | null =
-    activeAiSection === "review" ? "request" : activeAiSection === "context" ? "review" : null;
-  const nextAiSection: AiPanelSection | null =
-    activeAiSection === "request" ? "review" : activeAiSection === "review" ? "context" : null;
+  const templateFileUrl =
+    contract?.templateFileUrl ?? fallbackTemplate?.fileUrl ?? fallbackByName?.fileUrl ?? fallbackSingle?.fileUrl ?? directTemplateUrl;
 
-  const handleAiSubmit = async () => {
+  const isFinalized = contract?.status === "finalized";
+
+  const canSend =
+    !sendBusy &&
+    !isFinalized &&
+    (inputKind === "text" ? Boolean(inputText.trim()) : Boolean(inputFile));
+
+  function openInput(kind: InputKind) {
+    if (isFinalized) return;
+    setInputKind(kind);
+    setInputText("");
+    setInputFile(null);
+    setInputFileKey((v) => v + 1);
+    setSendError(null);
+    setIsInputModalOpen(true);
+  }
+
+  async function loadTemplate() {
+    if (!contractId || templateBusy) return;
+    if (templateText) return;
+    setTemplateBusy(true);
+    setTemplateError(null);
+    try {
+      const res = await fetch(`/api/contracts/template-text?contractId=${encodeURIComponent(contractId)}`, {
+        cache: "no-store",
+      });
+      if (!res.ok) {
+        setTemplateError("Не удалось получить текст шаблона.");
+        setTemplateBusy(false);
+        return;
+      }
+      const payload = (await res.json().catch(() => null)) as unknown;
+      const template = asRecord(asRecord(payload)["template"]);
+      setTemplateText(asString(template["text"]));
+      setTemplateRules(asString(template["rules"]));
+    } catch {
+      setTemplateError("Не удалось получить текст шаблона.");
+    } finally {
+      setTemplateBusy(false);
+    }
+  }
+
+  async function sendToPlatformContract(event: FormEvent) {
+    event.preventDefault();
     if (!contractId) return;
-    if (modeNeedsText && !message.trim()) return;
-    if (modeNeedsFile && !pendingFile) return;
-    setAiSubmitting(true); setAiError(null); setAiNotice(null);
+    if (!canSend) return;
+
+    const messageToSend = inputKind === "text" ? inputText.trim() : "";
+    const fileToSend = inputKind === "file" ? inputFile : null;
+
+    setSendBusy(true);
+    setSendError(null);
     try {
       const formData = new FormData();
       formData.append("contractId", contractId);
-      formData.append("mode", inputMode);
-      if (message.trim()) formData.append("message", message.trim());
-      if (pendingFile) formData.append("file", pendingFile);
-      const response = await fetch("/api/contracts/analyze-protocol", { method: "POST", body: formData });
-      if (!response.ok) { setAiError(t(locale, "workspace.contract.ai.error")); return; }
-      await loadData();
-      setAiNotice(t(locale, "workspace.contract.ai.notice.protocol"));
-      setMessage(""); setPendingFile(null);
-    } catch { setAiError(t(locale, "workspace.contract.ai.error")); }
-    finally { setAiSubmitting(false); }
-  };
-
-  const saveEdit = async (rowIndex: number, field: keyof ProtocolRow) => {
-    if (!contractId) return;
-    const next = protocolRowsState.map((row, index) => index === rowIndex ? { ...row, [field]: editValue } : row);
-    setProtocolRowsState(next);
-    setProtocolEditSaving(true); setProtocolEditError(null);
-    try {
-      const response = await fetch("/api/contracts/update-protocol-rows", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contractId, rows: next }),
-      });
-      if (!response.ok) throw new Error();
-      await loadData();
-      setEditCell(null); setEditValue("");
-    } catch { setProtocolEditError(t(locale, "workspace.contract.protocol.edit.error")); }
-    finally { setProtocolEditSaving(false); }
-  };
-
-  const saveColumnTitles = async () => {
-    if (!contractId) return;
-    setColumnTitlesSaving(true);
-    setColumnTitlesError(null);
-    try {
-      const response = await fetch("/api/contracts/update-protocol-columns", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contractId, titles: columnTitlesDraft }),
-      });
-      if (!response.ok) throw new Error();
-      await loadData();
-      setColumnTitlesEditing(false);
-    } catch {
-      setColumnTitlesError("Не удалось сохранить заголовки колонок.");
-    } finally {
-      setColumnTitlesSaving(false);
-    }
-  };
-
-  const isFinalized = contract?.status === "finalized";
-  const submitDisabled = isFinalTab || isFinalized || aiSubmitting || (modeNeedsText ? !message.trim() : !pendingFile);
-
-  useEffect(() => {
-    if (isFinalized) {
-      setActiveTab("final");
-    }
-  }, [isFinalized]);
-
-  useEffect(() => {
-    aiSectionScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
-  }, [activeAiSection]);
-
-  const finalizeContract = async () => {
-    if (!contractId) return;
-    setFinalizeBusy(true);
-    setFinalizeError(null);
-    try {
-      const response = await fetch("/api/contracts/finalize", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contractId }),
-      });
-      if (!response.ok) {
-        throw new Error();
+      if (inputKind === "text") {
+        formData.append("message", messageToSend);
+      } else if (fileToSend) {
+        formData.append("file", fileToSend);
       }
+
+      setIsInputModalOpen(false);
+
+      const response = await fetch("/api/platform/debug-input", { method: "POST", body: formData });
+      const payload = (await response.json().catch(() => null)) as
+        | { platformOutput?: unknown; platformError?: unknown; error?: unknown; ok?: unknown }
+        | null;
+      if (!response.ok) {
+        const message =
+          (payload?.platformError ? String(payload.platformError) : "") ||
+          (payload?.error ? String(payload.error) : "") ||
+          "Не удалось получить ответ от платформы.";
+        setSendError(message);
+        setSendBusy(false);
+        return;
+      }
+      if (!payload) {
+        setSendError("Пустой ответ от сервера.");
+        setSendBusy(false);
+        return;
+      }
+
+      if (payload.platformError) {
+        setSendError(String(payload.platformError));
+        setSendBusy(false);
+        return;
+      }
+      if (!payload.platformOutput || typeof payload.platformOutput !== "object") {
+        setSendError("Ответ платформы не распознан как JSON. Проверьте prompt агента.");
+        setSendBusy(false);
+        return;
+      }
+
+      const output = payload.platformOutput as Record<string, unknown>;
+      const rows = mapOutputToRows(output);
+      const comments = mapOutputToComments(output);
+      const summary = asString(output["summary"]).trim();
+      const recommendation = asString(output["recommendation"]).trim();
+
+      const state: ContractPlatformState = {
+        id: crypto.randomUUID(),
+        createdAt: new Date().toISOString(),
+        task: "protocol_draft",
+        inputMode: "client-freeform",
+        userMessage: messageToSend,
+        fileName: fileToSend ? fileToSend.name : undefined,
+        fileType: fileToSend ? fileToSend.type : undefined,
+        protocolRows: rows,
+        protocolComments: comments,
+        summary: summary || (rows.length ? `Обновлено: ${rows.length} строк(и) протокола.` : "Ответ получен."),
+        recommendation: recommendation || undefined,
+        platformOutput: output,
+      };
+
+      const saveRes = await fetch("/api/contracts/add-platform-state", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contractId, state }),
+      });
+      if (!saveRes.ok) {
+        setSendError("Не удалось сохранить состояние.");
+        setSendBusy(false);
+        return;
+      }
+
+      setActiveStateId(state.id);
+      setMainTab("protocol");
+
+      setInputText("");
+      setInputFile(null);
+      setInputFileKey((v) => v + 1);
       await loadData();
-      setActiveTab("final");
-      setShowFinalize(false);
     } catch {
-      setFinalizeError("Не удалось завершить договор.");
+      setSendError("Не удалось отправить запрос на платформу.");
     } finally {
-      setFinalizeBusy(false);
+      setSendBusy(false);
     }
-  };
+  }
+
+  async function saveProtocolDraft() {
+    if (!contractId || !activeStateId) return;
+    if (isFinalized) return;
+    setProtocolSaveBusy(true);
+    setProtocolSaveError(null);
+    try {
+      const patchRows: ProtocolRow[] = protocolDraft
+        .map((r) => ({
+          clause: r.clause.trim(),
+          clientText: r.clientText.trim(),
+          ourText: r.ourText.trim(),
+        }))
+        .filter((r) => r.clause || r.clientText || r.ourText);
+
+      const res = await fetch("/api/contracts/update-platform-state", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contractId,
+          stateId: activeStateId,
+          patch: { protocolRows: patchRows },
+        }),
+      });
+      if (!res.ok) throw new Error("save failed");
+      await loadData();
+    } catch {
+      setProtocolSaveError("Не удалось сохранить строки протокола.");
+    } finally {
+      setProtocolSaveBusy(false);
+    }
+  }
 
   return (
-    <main className="contract-workspace">
-      <section className="contract-workspace__left">
-        <header className="contract-workspace__header">
-          <div><span className="eyebrow">{t(locale, "workspace.contract.label")}</span><h1>{t(locale, "workspace.contract.title")}</h1></div>
-          {!isFinalized ? (
-            <button className="primary" onClick={() => setShowFinalize(true)}>{t(locale, "workspace.contract.action.finalize")}</button>
+    <main className="contract-workspace contract-workspace--v2">
+      <aside className="contract-side">
+        <article className="card contract-side__top">
+          <h3>Состояния</h3>
+          {states.length === 0 ? (
+            <p className="muted-text">Пока нет отправок. Добавьте текст или файл снизу.</p>
           ) : (
-            <span className="status ok">Договор завершен</span>
-          )}
-        </header>
-        <div className="contract-workspace__toolbar">
-          <div className="contract-workspace__back"><Link className="ghost-btn ghost-btn--inline" href="/">{t(locale, "workspace.contract.action.back")}</Link></div>
-          <div className="contract-tabs">
-            {(isFinalized ? tabOptions.filter((tab) => tab.id === "final") : tabOptions).map((tab) => (
-              <button key={tab.id} type="button" className={`contract-tab ${activeTab === tab.id ? "active" : ""}`} onClick={() => setActiveTab(tab.id)}>
-                {t(locale, tab.labelKey as never)}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className={`contract-view contract-view--${activeTab}`}>
-          <div className="contract-view__hint">
-            {activeTab === "template" && t(locale, "workspace.contract.view.template")}
-            {activeTab === "protocol" && t(locale, "workspace.contract.view.protocol")}
-            {activeTab === "final" && t(locale, "workspace.contract.view.final")}
-            {activeTab === "protocol" && protocolRowsState.length > 0 && (
-              <a className="ghost-btn ghost-btn--inline protocol-download-btn" href={`/api/contracts/protocol-download?contractId=${encodeURIComponent(contractId)}`}>
-                {t(locale, "workspace.contract.protocol.download")}
-              </a>
-            )}
-          </div>
-          <div className={`contract-view__frame contract-view__frame--${activeTab}`}>
-            {loadError && <p className="form-error">{loadError}</p>}
-            {activeTab === "template" && (isFinalized ? (
-              <div className="contract-view__placeholder">
-                <h3>Шаблон закрыт после завершения</h3>
-                <p className="muted-text">Доступен только финальный документ.</p>
-              </div>
-            ) : templateFileUrl ? <OnlyOfficeViewer fileUrl={templateFileUrl} fileName={templateFileName} mode="view" /> : <div className="contract-view__placeholder"><h3>{t(locale, "workspace.contract.empty.title")}</h3><p className="muted-text">{t(locale, "workspace.contract.empty.template")}</p></div>)}
-            {activeTab === "protocol" && (
-              <div className="contract-protocol-panel">
-                {isFinalized ? (
-                  <div className="contract-protocol-empty">
-                    <p className="muted-text">Протокол закрыт после завершения договора.</p>
-                  </div>
-                ) : protocolFileUrl ? (
-                  <OnlyOfficeViewer fileUrl={protocolFileUrl} fileName={protocolFileName} mode="edit" />
-                ) : null}
-                {protocolRowsState.length > 0 && (
-                  <>
-                    <div className="protocol-table-wrap"><h4>{t(locale, "workspace.contract.protocol.table.title")}</h4>
-                      <div className="protocol-table">
-                        <div className="protocol-table__toolbar">
-                          <div className="protocol-table__toolbar-title">
-                            <span className="muted-text">Шапка таблицы</span>
-                          </div>
-                          <div className="protocol-table__toolbar-actions">
-                            {!columnTitlesEditing ? (
-                              <button
-                                className="ghost-btn ghost-btn--inline"
-                                type="button"
-                                onClick={() => {
-                                  setColumnTitlesEditing(true);
-                                  setColumnTitlesError(null);
-                                }}
-                              >
-                                Редактировать
-                              </button>
-                            ) : (
-                              <>
-                                <button
-                                  className="primary"
-                                  type="button"
-                                  onClick={saveColumnTitles}
-                                  disabled={columnTitlesSaving}
-                                >
-                                  Сохранить
-                                </button>
-                                <button
-                                  className="ghost-btn ghost-btn--inline"
-                                  type="button"
-                                  onClick={() => {
-                                    setColumnTitlesEditing(false);
-                                    setColumnTitlesError(null);
-                                    const defaults = getDefaultProtocolColumnTitles(locale);
-                                    const fromContract = contract?.protocolColumnTitles;
-                                    setColumnTitlesDraft({
-                                      client: String(fromContract?.client || defaults.client),
-                                      our: String(fromContract?.our || defaults.our),
-                                      agreed: String(fromContract?.agreed || defaults.agreed),
-                                    });
-                                  }}
-                                >
-                                  Отмена
-                                </button>
-                              </>
-                            )}
-                          </div>
-                        </div>
-
-                        {columnTitlesEditing && (
-                          <div className="protocol-table__titles">
-                            <label className="protocol-title-field">
-                              <span className="muted-text">Колонка 1</span>
-                              <input
-                                className="protocol-title-input"
-                                value={columnTitlesDraft.client}
-                                onChange={(e) =>
-                                  setColumnTitlesDraft((prev) => ({
-                                    ...prev,
-                                    client: e.target.value,
-                                  }))
-                                }
-                              />
-                            </label>
-                            <label className="protocol-title-field">
-                              <span className="muted-text">Колонка 2</span>
-                              <input
-                                className="protocol-title-input"
-                                value={columnTitlesDraft.our}
-                                onChange={(e) =>
-                                  setColumnTitlesDraft((prev) => ({
-                                    ...prev,
-                                    our: e.target.value,
-                                  }))
-                                }
-                              />
-                            </label>
-                            <label className="protocol-title-field">
-                              <span className="muted-text">Колонка 3</span>
-                              <input
-                                className="protocol-title-input"
-                                value={columnTitlesDraft.agreed}
-                                onChange={(e) =>
-                                  setColumnTitlesDraft((prev) => ({
-                                    ...prev,
-                                    agreed: e.target.value,
-                                  }))
-                                }
-                              />
-                            </label>
-                            {columnTitlesError && (
-                              <p className="form-error">{columnTitlesError}</p>
-                            )}
-                          </div>
-                        )}
-
-                        <div className="protocol-table__head">
-                          <span>{t(locale, "workspace.contract.protocol.table.clause")}</span>
-                          <span>{columnTitlesDraft.client}</span>
-                          <span>{columnTitlesDraft.our}</span>
-                          <span>{columnTitlesDraft.agreed}</span>
-                        </div>
-                        {protocolRowsState.map((row, index) => {
-                          const isClauseEdit = editCell?.row === index && editCell.field === "clause";
-                          const isClientEdit = editCell?.row === index && editCell.field === "clientText";
-                          const isOurEdit = editCell?.row === index && editCell.field === "ourText";
-                          const isAgreedEdit = editCell?.row === index && editCell.field === "agreedText";
-                          return (<div className="protocol-table__row" key={`${row.clause}-${index}`}>
-                            <div className="protocol-cell">{isClauseEdit ? <div className="protocol-cell__edit"><input className="protocol-cell__input" value={editValue} onChange={(e) => setEditValue(e.target.value)} /><div className="protocol-cell__actions"><button className="protocol-cell__btn protocol-cell__btn--save" disabled={protocolEditSaving} onClick={() => saveEdit(index, "clause")}>Save</button><button className="protocol-cell__btn" onClick={() => { setEditCell(null); setEditValue(""); }}>Cancel</button></div></div> : <div className="protocol-cell__view"><span className="protocol-cell__text">{row.clause || "-"}</span><button className="protocol-cell__btn" onClick={() => { setEditCell({ row: index, field: "clause" }); setEditValue(row.clause || ""); }}>Edit</button></div>}</div>
-                            <div className="protocol-cell">{isClientEdit ? <div className="protocol-cell__edit"><textarea className="protocol-cell__textarea" value={editValue} onChange={(e) => setEditValue(e.target.value)} /><div className="protocol-cell__actions"><button className="protocol-cell__btn protocol-cell__btn--save" disabled={protocolEditSaving} onClick={() => saveEdit(index, "clientText")}>Save</button><button className="protocol-cell__btn" onClick={() => { setEditCell(null); setEditValue(""); }}>Cancel</button></div></div> : <div className="protocol-cell__view"><span className="protocol-cell__text">{row.clientText || "-"}</span><button className="protocol-cell__btn" onClick={() => { setEditCell({ row: index, field: "clientText" }); setEditValue(row.clientText || ""); }}>Edit</button></div>}</div>
-                            <div className="protocol-cell">{isOurEdit ? <div className="protocol-cell__edit"><textarea className="protocol-cell__textarea" value={editValue} onChange={(e) => setEditValue(e.target.value)} /><div className="protocol-cell__actions"><button className="protocol-cell__btn protocol-cell__btn--save" disabled={protocolEditSaving} onClick={() => saveEdit(index, "ourText")}>Save</button><button className="protocol-cell__btn" onClick={() => { setEditCell(null); setEditValue(""); }}>Cancel</button></div></div> : <div className="protocol-cell__view"><span className="protocol-cell__text">{row.ourText || "-"}</span><button className="protocol-cell__btn" onClick={() => { setEditCell({ row: index, field: "ourText" }); setEditValue(row.ourText || ""); }}>Edit</button></div>}</div>
-                            <div className="protocol-cell">{isAgreedEdit ? <div className="protocol-cell__edit"><textarea className="protocol-cell__textarea" value={editValue} onChange={(e) => setEditValue(e.target.value)} /><div className="protocol-cell__actions"><button className="protocol-cell__btn protocol-cell__btn--save" disabled={protocolEditSaving} onClick={() => saveEdit(index, "agreedText")}>Save</button><button className="protocol-cell__btn" onClick={() => { setEditCell(null); setEditValue(""); }}>Cancel</button></div></div> : <div className="protocol-cell__view"><span className="protocol-cell__text">{row.agreedText || "-"}</span><button className="protocol-cell__btn" onClick={() => { setEditCell({ row: index, field: "agreedText" }); setEditValue(row.agreedText || ""); }}>Edit</button></div>}</div>
-                          </div>);
-                        })}
-                      </div>
-                    </div>
-                  </>
-                )}
-                {protocolEditError && <p className="form-error">{protocolEditError}</p>}
-              </div>
-            )}
-            {activeTab === "final" && (
-              <div className="contract-final-panel">
-                {finalFileUrl ? (
-                  <>
-                    <div className="protocol-actions">
-                      <a className="ghost-btn ghost-btn--inline" href={finalFileUrl} download>
-                        Скачать финальный документ
-                      </a>
-                    </div>
-                    <OnlyOfficeViewer fileUrl={finalFileUrl} fileName={finalFileName} mode="view" />
-                  </>
-                ) : (
-                  <div className="contract-view__placeholder">
-                    <h3>Финальный документ еще не сформирован</h3>
-                    <p className="muted-text">Нажмите «Завершить», чтобы сформировать итоговый документ.</p>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-      </section>
-
-      <aside className="contract-workspace__right">
-        <div className="contract-ai-panel">
-          <div className="contract-ai-panel__header"><h2>{t(locale, "workspace.contract.ai.title")}</h2><span className={`status ${aiSubmitting || isFinalTab ? "warn" : "ok"}`}>{aiSubmitting ? "Processing..." : isFinalTab ? t(locale, "workspace.contract.ai.status.view") : t(locale, "workspace.contract.ai.status.active")}</span></div>
-          <p className="muted-text contract-ai-panel__helper">{t(locale, "workspace.contract.ai.helper")}</p>
-
-          <div className="contract-ai-panel__edge contract-ai-panel__edge--top">
-            <button
-              type="button"
-              className={`contract-ai-panel__next contract-ai-panel__next--top ${prevAiSection ? "visible" : ""}`}
-              onClick={() => prevAiSection && setActiveAiSection(prevAiSection)}
-              disabled={!prevAiSection}
-            >
-              ▲ {prevAiSection ? getAiSectionLabel(prevAiSection) : ""}
-            </button>
-          </div>
-
-          <div className="contract-ai-panel__content" ref={aiSectionScrollRef}>
-            {activeAiSection === "review" && (
-              <section className="contract-ai-panel__section contract-ai-panel__section--enter">
-                {contract?.protocolSummary && (<div className="contract-ai-summary"><h3>{t(locale, "workspace.contract.ai.summary.title")}</h3><p>{contract.protocolSummary}</p>{contract.protocolRecommendation && <p>{contract.protocolRecommendation}</p>}</div>)}
-                {protocolComments.length > 0 && (<div className="contract-ai-comments"><h3>{t(locale, "workspace.contract.ai.comments.title")}</h3>{protocolComments.map((item) => (<div key={item.id} className={`contract-ai-comment severity-${item.severity}`}><div><strong>{item.clause}</strong><span>{item.severity}</span></div><p>Was: {item.was}</p><p>Now: {item.now}</p><p>{item.comment}</p>{item.guidance && <p>{item.guidance}</p>}</div>))}</div>)}
-                {!contract?.protocolSummary && protocolComments.length === 0 ? (
-                  <p className="muted-text contract-ai-panel__empty">No AI comments yet. Send a request in the Request section.</p>
-                ) : null}
-              </section>
-            )}
-
-            {activeAiSection === "request" && (
-              <section className="contract-ai-panel__section contract-ai-panel__section--enter">
-                <div className="contract-ai-request">
-                  <div><h3>{t(locale, "workspace.contract.ai.request.title")}</h3><p className="muted-text">{t(locale, "workspace.contract.ai.request.subtitle")}</p></div>
-                  <div><h3>{t(locale, "workspace.contract.ai.mode.title")}</h3>{aiModeOptions.map((option) => (<button key={option.id} type="button" className={`contract-ai-branch ${inputMode === option.id ? "active" : ""}`} onClick={() => setInputMode(option.id)} disabled={isFinalTab}><strong>{t(locale, option.labelKey as never)}</strong><span>{t(locale, option.descKey as never)}</span></button>))}</div>
-                  {modeNeedsText && (
-            <div className="contract-ai-input">
-              <label htmlFor="ai-message">{t(locale, "workspace.contract.ai.input")}</label>
-              <textarea
-                id="ai-message"
-                value={message}
-                onChange={(e) => setMessage(e.target.value)}
-                placeholder={
-                  inputMode === "client-freeform"
-                    ? "Describe the client request..."
-                    : "Paste client points..."
-                }
-              />
-            </div>
-          )}
-                  {modeNeedsFile && (
-            <div className="contract-ai-input">
-              <label>{t(locale, "workspace.contract.ai.fileLabel")}</label>
-
-              <div className="contract-ai-actions">
+            <div className="contract-state-list">
+              {states.map((s) => (
                 <button
-                  className="ghost-btn ghost-btn--inline"
+                  key={s.id}
                   type="button"
-                  disabled={isFinalTab}
-                  onClick={() => chatFileRef.current?.click()}
+                  className={`contract-state ${activeStateId === s.id ? "active" : ""}`}
+                  onClick={() => setActiveStateId(s.id)}
                 >
-                  Attach file
+                  <div className="contract-state__title">
+                    {s.fileName ? "Файл от контрагента" : "Текст от контрагента"}
+                  </div>
+                  <div className="contract-state__meta">{formatDate(s.createdAt)}</div>
+                  {s.fileName ? <div className="contract-state__meta muted-text">{s.fileName}</div> : null}
                 </button>
-
-                <input
-                  ref={chatFileRef}
-                  className="hidden-file-input"
-                  type="file"
-                  onChange={(e) => {
-                    const file = e.currentTarget.files?.[0] ?? null;
-                    e.currentTarget.value = "";
-                    if (file) {
-                      setPendingFile(file);
-                    }
-                  }}
-                />
-              </div>
-
-              {pendingFile && (
-                <div className="contract-ai-attachment">
-                  <span className="muted-text">{pendingFile.name}</span>
-                  <button
-                    className="ghost-btn ghost-btn--inline"
-                    type="button"
-                    onClick={() => setPendingFile(null)}
-                  >
-                    Remove
-                  </button>
-                </div>
-              )}
+              ))}
             </div>
           )}
-                  {aiSubmitting ? (
-                    <div className="contract-ai-processing" role="status" aria-live="polite">
-                      <div className="contract-ai-processing__spinner" aria-hidden="true" />
-                      <div className="contract-ai-processing__text">
-                        <strong>AI is analyzing your request</strong>
-                        <span>Building summary, comments and protocol updates...</span>
-                      </div>
-                      <div className="contract-ai-processing__dots" aria-hidden="true">
-                        <span />
-                        <span />
-                        <span />
-                      </div>
-                    </div>
-                  ) : null}
-                  <button className="primary" disabled={submitDisabled} onClick={handleAiSubmit}>{t(locale, "workspace.contract.ai.send")}</button>
-                  {aiError && <p className="form-error">{aiError}</p>}{aiNotice && <p className="muted-text">{aiNotice}</p>}
-                </div>
-              </section>
-            )}
+        </article>
 
-            {activeAiSection === "context" && (
-              <section className="contract-ai-panel__section contract-ai-panel__section--enter">
-                <div className="contract-ai-log"><h3>{t(locale, "workspace.contract.ai.log.title")}</h3>{protocolRequests.length === 0 ? <p className="muted-text">{t(locale, "workspace.contract.ai.log.empty")}</p> : protocolRequests.map((item) => (<div key={item.id}><div><strong>{t(locale, getModeLabelKey(item.mode))}</strong><span>{new Date(item.createdAt).toLocaleString()}</span></div>{item.fileName && <div>File: {item.fileName}</div>}{item.summary && <p>{item.summary}</p>}<p>{item.text}</p></div>))}</div>
-              </section>
-            )}
-          </div>
-
-          <div className="contract-ai-panel__edge visible">
-            <button
-              type="button"
-              className={`contract-ai-panel__next contract-ai-panel__next--bottom ${nextAiSection ? "flag" : ""}`}
-              onClick={() => nextAiSection && setActiveAiSection(nextAiSection)}
-              disabled={!nextAiSection}
-            >
-              v {nextAiSection ? getAiSectionLabel(nextAiSection) : ""}
+        <article className="card contract-side__bottom">
+          <h3>Ввод контрагента</h3>
+          <p className="muted-text">Добавьте текст или файл. После отправки создаётся новое состояние.</p>
+          {sendBusy ? (
+            <div className="contract-ai-processing" style={{ marginTop: 10 }}>
+              <div className="contract-ai-processing__spinner" aria-hidden="true" />
+              <div className="contract-ai-processing__text">
+                <strong>Идёт обработка</strong>
+                <span>
+                  Отправили запрос на платформу
+                  <span className="contract-ai-processing__dots" aria-hidden="true">
+                    <span />
+                    <span />
+                    <span />
+                  </span>
+                </span>
+              </div>
+              <span className="muted-text" style={{ fontSize: 12 }}>
+                Ждём ответ
+              </span>
+            </div>
+          ) : null}
+          {sendError ? <p className="form-error" style={{ marginTop: 10 }}>{sendError}</p> : null}
+          <div className="contract-input-actions">
+            <button className="ghost-btn" type="button" disabled={isFinalized} onClick={() => openInput("text")}>
+              Текст
+            </button>
+            <button className="ghost-btn" type="button" disabled={isFinalized} onClick={() => openInput("file")}>
+              Файл
             </button>
           </div>
-        </div>
+          {isFinalized ? <p className="muted-text">Дело завершено. Ввод и редактирование отключены.</p> : null}
+        </article>
       </aside>
 
+      <section className="contract-main">
+        <header className="contract-main__header">
+          <div>
+            <span className="eyebrow">Открытое дело</span>
+            <h1>{contract?.templateName || "Договор"}</h1>
+            {loadError ? <p className="form-error">{loadError}</p> : null}
+          </div>
+          <div className="contract-main__actions">
+            {templateFileUrl ? (
+              <a className="ghost-btn ghost-btn--inline" href={templateFileUrl} target="_blank" rel="noreferrer">
+                Открыть шаблон
+              </a>
+            ) : null}
+            {!isFinalized ? (
+              <button className="primary" type="button" onClick={() => setShowFinalize(true)}>
+                Завершить
+              </button>
+            ) : (
+              <span className="status ok">Дело завершено</span>
+            )}
+            <Link className="ghost-btn ghost-btn--inline" href="/">
+              ← К контрагентам
+            </Link>
+          </div>
+        </header>
+
+        <article className="card contract-main__panel">
+          <div className="contract-main__tabs">
+            <button
+              className={`contract-tab ${mainTab === "protocol" ? "active" : ""}`}
+              type="button"
+              onClick={() => setMainTab("protocol")}
+            >
+              Протокол
+            </button>
+            <button
+              className={`contract-tab ${mainTab === "comments" ? "active" : ""}`}
+              type="button"
+              onClick={() => setMainTab("comments")}
+            >
+              Комментарии
+            </button>
+            <button
+              className={`contract-tab ${mainTab === "template" ? "active" : ""}`}
+              type="button"
+              onClick={() => {
+                setMainTab("template");
+                void loadTemplate();
+              }}
+            >
+              Текст шаблона
+            </button>
+          </div>
+
+          <div className="contract-main__body">
+            {!activeState ? (
+              <p className="muted-text">Выберите состояние слева или отправьте текст/файл.</p>
+            ) : mainTab === "protocol" ? (
+              <>
+                {activeState.summary ? <p className="analysis-summary">{activeState.summary}</p> : null}
+                {protocolDraft.length === 0 ? (
+                  <p className="muted-text">Пока нет строк протокола.</p>
+                ) : (
+                  <div className="analysis-protocol-table">
+                    <div className="analysis-protocol-row analysis-protocol-row--head">
+                      <div>Пункт</div>
+                      <div>Позиция контрагента</div>
+                      <div>Наша редакция</div>
+                    </div>
+                    {protocolDraft.map((row, index) => (
+                      <div className="analysis-protocol-row" key={`${row.clause}-${index}`}>
+                        <input
+                          value={row.clause}
+                          onChange={(e) =>
+                            setProtocolDraft((prev) =>
+                              prev.map((item, idx) => (idx === index ? { ...item, clause: e.target.value } : item)),
+                            )
+                          }
+                        />
+                        <textarea
+                          rows={3}
+                          value={row.clientText}
+                          onChange={(e) =>
+                            setProtocolDraft((prev) =>
+                              prev.map((item, idx) =>
+                                idx === index ? { ...item, clientText: e.target.value } : item,
+                              ),
+                            )
+                          }
+                        />
+                        <textarea
+                          rows={3}
+                          value={row.ourText}
+                          onChange={(e) =>
+                            setProtocolDraft((prev) =>
+                              prev.map((item, idx) =>
+                                idx === index ? { ...item, ourText: e.target.value } : item,
+                              ),
+                            )
+                          }
+                        />
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="analysis-protocol-actions">
+                  <button
+                    className="ghost-btn"
+                    type="button"
+                    onClick={() =>
+                      setProtocolDraft((prev) => [...prev, { clause: "", clientText: "", ourText: "" }])
+                    }
+                  >
+                    Добавить строку
+                  </button>
+                  <button
+                    className="ghost-btn"
+                    type="button"
+                    disabled={protocolSaveBusy}
+                    onClick={() => void saveProtocolDraft()}
+                  >
+                    {protocolSaveBusy ? "Сохраняем..." : "Сохранить"}
+                  </button>
+                </div>
+                {protocolSaveError ? <p className="form-error">{protocolSaveError}</p> : null}
+              </>
+            ) : mainTab === "comments" ? (
+              <>
+                {activeState.summary ? <p className="analysis-summary">{activeState.summary}</p> : null}
+                {Array.isArray(activeState.protocolComments) && activeState.protocolComments.length > 0 ? (
+                  <div className="analysis-comments">
+                    {activeState.protocolComments.map((c) => (
+                      <div
+                        key={c.id}
+                        className={`analysis-comment ${
+                          c.severity === "critical"
+                            ? "severity-critical"
+                            : c.severity === "moderate"
+                              ? "severity-moderate"
+                              : "severity-minor"
+                        }`}
+                      >
+                        <div className="analysis-comment__head">
+                          <strong>{c.clause || "—"}</strong>
+                          <span className="muted-text">{severityBadge(c.severity)}</span>
+                        </div>
+                        <p>{c.comment}</p>
+                        {c.guidance ? <p className="muted-text">{c.guidance}</p> : null}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="muted-text">Пока нет комментариев.</p>
+                )}
+              </>
+            ) : (
+              <>
+                {templateError ? <p className="form-error">{templateError}</p> : null}
+                {templateBusy ? <p className="muted-text">Загружаем текст шаблона...</p> : null}
+                {templateRules?.trim() ? (
+                  <>
+                    <h3>Правила</h3>
+                    <div className="knowledge-doc-card__rules">{templateRules}</div>
+                  </>
+                ) : (
+                  <p className="muted-text">Правила не указаны.</p>
+                )}
+                <h3 style={{ marginTop: 14 }}>Текст</h3>
+                <pre className="analysis-text">{templateText?.trim() ? templateText : "Текст не извлечён."}</pre>
+              </>
+            )}
+          </div>
+        </article>
+      </section>
+
+      {isInputModalOpen ? (
+        <div className="modal-root" role="dialog" aria-modal="true" aria-label="Ввод контрагента">
+          <div className="modal-backdrop" onClick={() => setIsInputModalOpen(false)} />
+          <div className="modal-card">
+            <h3>{inputKind === "text" ? "Ввод текстом" : "Ввод файлом"}</h3>
+            <form className="client-form" onSubmit={(e) => void sendToPlatformContract(e)}>
+              {inputKind === "text" ? (
+                <label className="field">
+                  <span>Текст *</span>
+                  <textarea
+                    rows={8}
+                    value={inputText}
+                    onChange={(e) => setInputText(e.target.value)}
+                    placeholder="Например: 5.2 ограничить штраф…"
+                  />
+                </label>
+              ) : (
+                <label className="field">
+                  <span>Файл *</span>
+                  <input
+                    key={inputFileKey}
+                    type="file"
+                    onChange={(e) => setInputFile(e.target.files?.[0] ?? null)}
+                  />
+                  {inputFile ? (
+                    <span className="muted-text" style={{ marginTop: 6, display: "inline-block" }}>
+                      {inputFile.name} • {formatFileSize(inputFile.size)}
+                    </span>
+                  ) : null}
+                </label>
+              )}
+
+              {sendError ? <p className="form-error">{sendError}</p> : null}
+
+              <div className="modal-actions">
+                <button className="ghost-btn" type="button" onClick={() => setIsInputModalOpen(false)}>
+                  Отмена
+                </button>
+                <button className="primary" type="submit" disabled={!canSend}>
+                  {sendBusy ? "Отправляем..." : "Отправить"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
       {showFinalize ? (
-        <div className="modal-root" role="dialog" aria-modal="true" aria-label="Завершение договора">
+        <div className="modal-root" role="dialog" aria-modal="true" aria-label="Завершить дело">
           <div className="modal-backdrop" onClick={() => setShowFinalize(false)} />
           <div className="modal-card">
-            <h3>Завершить работу над договором?</h3>
+            <h3>Завершить дело?</h3>
             <p className="muted-text">
-              После завершения будут доступны только финальные документы. Шаблон и протокол
-              станут недоступны для просмотра и редактирования.
+              После завершения ввод контрагента и редактирование протокола будут отключены. Финальный документ в
+              интерфейсе не показываем, но состояние дела будет зафиксировано.
             </p>
-            {finalizeError && <p className="form-error">{finalizeError}</p>}
+            {finalizeError ? <p className="form-error">{finalizeError}</p> : null}
             <div className="modal-actions">
-              <button className="ghost-btn" onClick={() => setShowFinalize(false)} type="button">
+              <button className="ghost-btn" type="button" onClick={() => setShowFinalize(false)} disabled={finalizeBusy}>
                 Отмена
               </button>
-              <button className="primary" onClick={finalizeContract} disabled={finalizeBusy} type="button">
-                Завершить
+              <button
+                className="primary"
+                type="button"
+                disabled={finalizeBusy}
+                onClick={() => {
+                  if (!contractId) return;
+                  setFinalizeBusy(true);
+                  setFinalizeError(null);
+                  void fetch("/api/contracts/finalize", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ contractId }),
+                  })
+                    .then(async (res) => {
+                      if (!res.ok) throw new Error("finalize failed");
+                      await loadData();
+                      setShowFinalize(false);
+                    })
+                    .catch(() => {
+                      setFinalizeError("Не удалось завершить дело.");
+                    })
+                    .finally(() => setFinalizeBusy(false));
+                }}
+              >
+                {finalizeBusy ? "Завершаем..." : "Завершить"}
               </button>
             </div>
           </div>

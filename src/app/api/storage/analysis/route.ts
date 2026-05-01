@@ -8,11 +8,11 @@ async function scopeFromSession() {
   return { tenantId: user.id, agentId: "jurist3-agent" };
 }
 
-export async function GET(request: Request) {
+export async function GET() {
   try {
     const scope = await scopeFromSession();
-    const data = await getStore<Record<string, unknown>>("profile_store", scope);
-    return NextResponse.json({ data });
+    const data = await getStore<unknown[]>("analysis_store", scope);
+    return NextResponse.json({ items: data });
   } catch (error) {
     if (isUnauthorizedError(error)) return unauthorizedResponse();
     throw error;
@@ -22,11 +22,12 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const scope = await scopeFromSession();
-    const body = (await request.json()) as { data?: Record<string, unknown> };
-    await setStore("profile_store", scope, body.data || {});
+    const body = (await request.json()) as { items?: unknown[] };
+    await setStore("analysis_store", scope, body.items || []);
     return NextResponse.json({ ok: true });
   } catch (error) {
     if (isUnauthorizedError(error)) return unauthorizedResponse();
     throw error;
   }
 }
+

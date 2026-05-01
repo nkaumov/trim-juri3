@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireSessionUser } from "@/lib/auth";
-import { getStore, setStore } from "@/lib/storage-server";
 import { saveDocument } from "@/lib/documents";
+import { extractPlainTextFromBuffer } from "@/lib/document-text";
 
 export const runtime = "nodejs";
 
@@ -11,14 +11,14 @@ export async function POST(request: Request) {
     const scope = { tenantId: user.id, agentId: "jurist3-agent" };
     const formData = await request.formData();
     const file = formData.get("file") as File | null;
-    const contractId = String(formData.get("contractId") || "").trim();
 
-    if (!file || !contractId) {
-      return NextResponse.json({ error: "missing file or contractId" }, { status: 400 });
+    if (!file) {
+      return NextResponse.json({ error: "missing file" }, { status: 400 });
     }
 
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
+
     const docId = await saveDocument({
       tenantId: scope.tenantId,
       agentId: scope.agentId,
@@ -27,24 +27,18 @@ export async function POST(request: Request) {
       buffer,
     });
 
-    const fileUrl = `/api/contracts/files/${docId}`;
+    const text = await extractPlainTextFromBuffer(buffer, file.name);
 
-    const contracts = await getStore<Record<string, unknown>[]>("contracts_store", scope);
-    const next = Array.isArray(contracts)
-      ? contracts.map((item) => {
-          if (!item || String(item["id"] || "") !== contractId) return item;
-          return {
-            ...item,
-            protocolFileUrl: fileUrl,
-            protocolFileName: file.name,
-            protocolUpdatedAt: new Date().toISOString(),
-          };
-        })
-      : contracts;
-
-    await setStore("contracts_store", scope, next);
-
-    return NextResponse.json({ fileUrl, fileName: file.name });
+    return NextResponse.json({
+      ok: true,
+      docId,
+      fileUrl: `/api/contracts/files/${docId}`,
+      fileName: file.name,
+      fileSize: file.size,
+      mimeType: file.type || "application/octet-stream",
+      extractedText: text,
+      extractedLength: text.length,
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : "unknown error";
     if (message.includes("UNAUTHORIZED")) {

@@ -80,6 +80,21 @@ export type ProtocolRequestLog = {
   summary?: string;
 };
 
+export type ContractPlatformState = {
+  id: string;
+  createdAt: string;
+  task: "protocol_draft";
+  inputMode: ProtocolInputMode;
+  userMessage?: string;
+  fileName?: string;
+  fileType?: string;
+  protocolRows?: ProtocolRow[];
+  protocolComments?: ProtocolComment[];
+  summary?: string;
+  recommendation?: string;
+  platformOutput?: unknown;
+};
+
 export type ContractDraft = {
   id: string;
   clientId: string;
@@ -97,6 +112,7 @@ export type ContractDraft = {
   protocolSummary?: string;
   protocolRecommendation?: string;
   protocolRequests?: ProtocolRequestLog[];
+  platformStates?: ContractPlatformState[];
   protocolColumnTitles?: ProtocolColumnTitles;
   createdAt: string;
   status: "draft" | "archived" | "finalized";

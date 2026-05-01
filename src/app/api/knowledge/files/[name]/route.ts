@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { getDocument } from "@/lib/documents";
 import { requireSessionUser } from "@/lib/auth";
-import { verifyDocumentToken } from "@/lib/doc-sign";
 import { isUnauthorizedError, unauthorizedResponse } from "@/lib/http-errors";
 
 export const runtime = "nodejs";
@@ -40,16 +39,6 @@ export async function HEAD(
 ) {
   try {
     const { name } = await context.params;
-    const url = new URL(request.url);
-    const token = url.searchParams.get("token") || "";
-    const exp = Number(url.searchParams.get("exp") || "0");
-    if (token && verifyDocumentToken(name, exp, token)) {
-      const document = await getDocument(name);
-      if (!document) {
-        return NextResponse.json({ error: "File not found" }, { status: 404 });
-      }
-      return new NextResponse(null, { status: 200, headers: buildHeaders(document.fileName) });
-    }
     const user = await requireSessionUser();
     const document = await getDocument(name, { tenantId: user.id, agentId: "jurist3-agent" });
     if (!document) {
@@ -72,19 +61,6 @@ export async function GET(
 ) {
   try {
     const { name } = await context.params;
-    const url = new URL(request.url);
-    const token = url.searchParams.get("token") || "";
-    const exp = Number(url.searchParams.get("exp") || "0");
-    if (token && verifyDocumentToken(name, exp, token)) {
-      const document = await getDocument(name);
-      if (!document) {
-        return NextResponse.json({ error: "File not found" }, { status: 404 });
-      }
-      return new NextResponse(new Uint8Array(document.buffer), {
-        status: 200,
-        headers: buildHeaders(document.fileName),
-      });
-    }
     const user = await requireSessionUser();
     const document = await getDocument(name, { tenantId: user.id, agentId: "jurist3-agent" });
     if (!document) {
