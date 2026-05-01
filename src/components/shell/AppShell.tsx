@@ -6,6 +6,7 @@ import type { ContractDraft, ProtocolRow } from "@/lib/contracts/types";
 import type { KnowledgeDocument, KnowledgeScope } from "@/lib/knowledge/types";
 import { usePublicConfig } from "@/lib/usePublicConfig";
 import type { RiskAnalysisCase, RiskComment, RiskSeverity } from "@/lib/analysis/types";
+import { randomUUID } from "@/lib/random-uuid";
 
 type Section = "dashboard" | "contracts" | "analysis" | "knowledge";
 
@@ -124,7 +125,7 @@ function mapPlatformOutputToRiskComments(output: Record<string, unknown>): RiskC
     const basis = asString(item["basis"] ?? item["law"] ?? item["grounds"] ?? item["guidance"]).trim();
 
     mapped.push({
-      id: asString(item["id"]).trim() || crypto.randomUUID(),
+      id: asString(item["id"]).trim() || randomUUID(),
       severity: normalizeRiskSeverity(item["severity"]),
       title,
       details,
@@ -452,7 +453,7 @@ export function AppShell() {
     }
 
     const newClient: Client = {
-      id: crypto.randomUUID(),
+      id: randomUUID(),
       companyName: normalizedName,
       notes: notes.trim(),
       createdAt: new Date().toISOString(),
@@ -608,7 +609,7 @@ export function AppShell() {
     }
 
     const newDraft: ContractDraft = {
-      id: crypto.randomUUID(),
+      id: randomUUID(),
       clientId: selectedClientId,
       templateDocId: hasClientTemplate ? clientTemplateMeta!.docId : template!.id,
       templateName: hasClientTemplate ? clientTemplateMeta!.fileName : template!.fileName,
@@ -617,7 +618,7 @@ export function AppShell() {
       status: "draft",
       iterations: [
         {
-          id: crypto.randomUUID(),
+          id: randomUUID(),
           title: "Договор создан",
           content:
             `Шаблон договора: ${hasClientTemplate ? clientTemplateMeta!.fileName : template!.fileName}\n\n` +
@@ -683,7 +684,7 @@ export function AppShell() {
 
     const urlDocId = fileUrl.split("/").filter(Boolean).slice(-1)[0];
     const doc: KnowledgeDocument = {
-      id: urlDocId || crypto.randomUUID(),
+      id: urlDocId || randomUUID(),
       tenantId: knowledgeScope.tenantId,
       agentId: knowledgeScope.agentId,
       section: "templates",
@@ -908,7 +909,7 @@ export function AppShell() {
       const extractedText = String(payload.extractedText || "");
 
       const newCase: RiskAnalysisCase = {
-        id: crypto.randomUUID(),
+        id: randomUUID(),
         tenantId: knowledgeScope.tenantId,
         agentId: knowledgeScope.agentId,
         title: title || payload.fileName || "Анализ договора",

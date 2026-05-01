@@ -1,5 +1,7 @@
 ﻿import type { ContractDraft } from "@/lib/contracts/types";
 
+import { randomUUID } from "@/lib/random-uuid";
+
 export const contractsStorageKey = "jurist3.contracts.v1";
 
 export function loadContracts(): ContractDraft[] {
@@ -35,7 +37,7 @@ export function loadContracts(): ContractDraft[] {
             })
           : [
               {
-                id: crypto.randomUUID(),
+                id: randomUUID(),
                 title: "Договор создан",
                 content:
                   `Шаблон договора: ${item.templateName}\n\n` +

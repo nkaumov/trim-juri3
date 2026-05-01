@@ -6,6 +6,7 @@ import { useParams } from "next/navigation";
 import type { ContractDraft, ContractPlatformState, ProtocolComment, ProtocolRow } from "@/lib/contracts/types";
 import type { KnowledgeDocument } from "@/lib/knowledge/types";
 import { usePublicConfig } from "@/lib/usePublicConfig";
+import { randomUUID } from "@/lib/random-uuid";
 
 type MainTab = "protocol" | "comments" | "template";
 type InputKind = "text" | "file";
@@ -92,7 +93,7 @@ function mapOutputToComments(output: Record<string, unknown>): ProtocolComment[]
         : "moderate";
 
     mapped.push({
-      id: asString(item.id).trim() || crypto.randomUUID(),
+      id: asString(item.id).trim() || randomUUID(),
       clause: asString(item.clause).trim() || "\u2014",
       was: asString(item.was),
       now: asString(item.now),
@@ -311,7 +312,7 @@ export function ContractWorkspace() {
       const recommendation = asString(output["recommendation"]).trim();
 
       const state: ContractPlatformState = {
-        id: crypto.randomUUID(),
+        id: randomUUID(),
         createdAt: new Date().toISOString(),
         task: "protocol_draft",
         inputMode: "client-freeform",
